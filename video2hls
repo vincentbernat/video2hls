@@ -179,6 +179,9 @@ def parse_args():
     g.add_argument("--ffprobe", metavar="EXE",
                    default="ffprobe",
                    help="ffprobe executable name")
+    g.add_argument("--mp4file", metavar="EXE",
+                   default="mp4file",
+                   help="mp4file executable name")
 
     parser.add_argument("--output", metavar="DIR",
                         help="output directory")
@@ -270,7 +273,7 @@ def setup_logging(options):
 
 def run(options, what, *args):
     """Execute either ffmpeg or ffprobe with the provided arguments."""
-    if what in {"ffprobe", "ffmpeg"}:
+    if what in {"ffprobe", "ffmpeg", "mp4file"}:
         what = getattr(options, what)
 
     jargs = " ".join(args)
@@ -280,8 +283,8 @@ def run(options, what, *args):
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
     stdout, stderr = proc.communicate(None)
-    stdout = stdout.decode('utf-8')
-    stderr = stderr.decode('utf-8')
+    stdout = stdout.decode('utf-8', 'replace')
+    stderr = stderr.decode('utf-8', 'replace')
 
     if proc.returncode != 0:
         logger.error("{} error:\n{}\n{}\n{}".format(
@@ -318,6 +321,88 @@ def probe(options):
         'audio': ([x for x in streams
                    if x['codec_type'] == 'audio'] or [None])[0]
     }
+
+
+def extract_codecs(options, sample):
+    """Extract codecs information from the given MP4 sample.
+
+    This makes use of mp4file since extracting this information is
+    quite complex. This is not complete as all codecs are a bit
+    different. See RFC 6381, section 3.3 and this SO question:
+    https://stackoverflow.com/questions/16363167/html5-video-tag-codecs-attribute#16365526
+
+    """
+    result = run(options, 'mp4file', '--dump', sample)
+    result = result.split('\n')
+    # The codecs are the ones in /moov/trak/mdia/minf/stbl/stdsd
+    codec_re = re.compile(r'.*: type (?P<codec>\S+) '
+                          r'\(moov.trak.mdia.minf.stbl.stsd.(?P=codec)\)')
+    attribute_re = re.compile(r'.*: (?P<attribute>\S+) = (?P<value>\d+) .*')
+    info_re = re.compile(r'.*: info = <\d+ bytes>\s+(?P<byte>\d{2}) .*')
+    codecs = {mo.group('codec')
+              for mo in [codec_re.match(l) for l in result]
+              if mo}
+    results = []
+    for codec in codecs:
+        if codec == "avc1":
+            # Look for moov.trak.mdia.minf.stbl.stsd.avc1.avcC
+            for idx, line in enumerate(result):
+                if "(moov.trak.mdia.minf.stbl.stsd.avc1.avcC)" in line:
+                    spaces = len(line) - len(line.lstrip(' '))
+                    spaces = ' ' * (spaces+1)
+                    profile = None
+                    constraints = None
+                    level = None
+                    for line in result[idx+1:]:
+                        if not line.startswith(spaces):
+                            break
+                        mo = attribute_re.match(line)
+                        if not mo:
+                            continue
+                        if mo.group('attribute') == 'AVCProfileIndication':
+                            profile = int(mo.group('value'))
+                        elif mo.group('attribute') == 'profile_compatibility':
+                            constraints = int(mo.group('value'))
+                        elif mo.group('attribute') == 'AVCLevelIndication':
+                            level = int(mo.group('value'))
+                    if all(x is not None
+                           for x in (profile, constraints, level)):
+                        codec = (f'avc1.{profile:02X}'
+                                 f'{constraints:02X}{level:02X}')
+                        logger.debug(f'found codec {codec} in {sample}')
+                        results.append(codec)
+                    else:
+                        raise RuntimeError('unable to decode AVC1 codec')
+        elif codec == "mp4a":
+            # Look for moov.trak.mdia.minf.stbl.stsd.mp4a.esds
+            for idx, line in enumerate(result):
+                if "(moov.trak.mdia.minf.stbl.stsd.mp4a.esds)" in line:
+                    spaces = len(line) - len(line.lstrip(' '))
+                    spaces = ' ' * (spaces+1)
+                    oti = None
+                    osti = None
+                    for line in result[idx+1:]:
+                        if not line.startswith(spaces):
+                            break
+                        mo = attribute_re.match(line)
+                        if mo and mo.group('attribute') == 'objectTypeId':
+                            oti = int(mo.group('value'))
+                        elif 'decSpecificInfo' in line:
+                            osti = True
+                        elif osti is True:
+                            mo = info_re.match(line)
+                            if not mo:
+                                raise RuntimeError('cannot decode '
+                                                   'specific info')
+                            osti = (int(mo.group('byte'), 16) & 0xf8) >> 3
+                    if all(x is not None
+                           for x in (oti, osti)):
+                        codec = f'mp4a.{oti:02X}.{osti}'
+                        logger.debug(f'found codec {codec} in {sample}')
+                        results.append(codec)
+                    else:
+                        raise RuntimeError('unable to decode MP4A codec')
+    return ",".join(results)
 
 
 def poster(options, technical):
@@ -455,9 +540,7 @@ def transcode(options, technical):
                             f'textfile={idx}.txt: fontsize=48: '
                             'fontcolor=white@0.5: '
                             'borderw=3: bordercolor=black@0.5')
-        args += ('-f', 'hls',    # Output format is HLS
-                 # Apply filters
-                 '-vf', ','.join(vfilters),
+        hargs = ('-vf', ','.join(vfilters),
                  # Select appropriate codec
                  '-c:v', options.video_codecs[idx],
                  # Select appropriate profile
@@ -469,17 +552,19 @@ def transcode(options, technical):
                  '-bufsize:v', f'{options.video_bitrates[idx]*1.5}k')
         if audio:
             # Audio codec
-            args += ('-c:a', options.audio_codec)
+            hargs += ('-c:a', options.audio_codec)
             # Audio sampling rate
             if options.audio_sampling:
-                args += ('-ar', f'{options.audio_sampling}')
+                hargs += ('-ar', f'{options.audio_sampling}')
             else:
-                args += ('-ar', f'{sampling}')
+                hargs += ('-ar', f'{sampling}')
             # Profile and bitrate
-            args += ('-profile:a', options.audio_profile,
-                     '-b:a', f'{options.audio_bitrate}k')
+            hargs += ('-profile:a', options.audio_profile,
+                      '-b:a', f'{options.audio_bitrate}k')
         # HLS options
-        args += ('-hls_time', f'{options.hls_time}',
+        args += ('-f', 'hls',
+                 *hargs,
+                 '-hls_time', f'{options.hls_time}',
                  '-g', f'{keyf}', '-keyint_min', f'{keyf}',
                  '-hls_playlist_type', 'vod',
                  '-hls_list_size', '0',
@@ -495,13 +580,18 @@ def transcode(options, technical):
                      ".".join([options.hls_segments.format(
                          index='{idx}_init', **voptions),
                                'mp4']))
-
         # Output filename
         playlist_name = ".".join([options.hls_segments.format(
             index=f'{idx}', **voptions),
                                   'm3u8'])
         args += (playlist_name,)
         playlists[idx] = playlist_name
+
+        # Small MP4 to extract codec
+        args += ('-f', 'mp4',    # Output format is MP4
+                 *hargs,
+                 '-frames:v', '1',
+                 f'_{idx}.mp4')
 
     logger.info('start transcoding')
     run(options, 'ffmpeg', '-loglevel', 'error', *args)
@@ -510,12 +600,24 @@ def transcode(options, technical):
     with open(options.hls_master_playlist, "w", encoding='utf-8') as master:
         master.write('#EXTM3U\n')
         master.write('#EXT-X-VERSION:3\n')
+        no_codecs = False
         for idx in playlists:
+            codecs = None
+            if not no_codecs:
+                try:
+                    codecs = extract_codecs(options, f'_{idx}.mp4')
+                except FileNotFoundError:
+                    logger.warning('cannot extract codec due to '
+                                   'mp4file missing')
+                    no_codecs = True
             master.write(
                 '#EXT-X-STREAM-INF:'
                 f'BANDWIDTH={options.video_bitrates[idx]}000,'
                 f'RESOLUTION={options.video_heights[idx] * width // height}x'
-                f'{options.video_heights[idx]},'
+                f'{options.video_heights[idx]},')
+            if codecs:
+                master.write(f'CODECS="{codecs}",')
+            master.write(
                 f'FRAME-RATE={fps:.4},'
                 f'NAME="{options.video_names[idx]}"\n'
                 f'{options.hls_playlist_prefix}{playlists[idx]}\n')
