@@ -93,7 +93,7 @@ def parse_args():
                    nargs="+", type=str,
                    help="video codecs")
     g.add_argument("--video-profiles", metavar="PROFILE",
-                   default=["baseline@3.0"],
+                   default=["main@3.1"],
                    nargs="+", type=str,
                    help="video profile (name@level)")
     g.add_argument("--video-names", metavar="NAME",
@@ -140,7 +140,7 @@ def parse_args():
                    help="progressive MP4 codec")
     g.add_argument("--mp4-profile", metavar="PROFILE",
                    type=str,
-                   default="baseline@3.0",
+                   default="main@3.1",
                    help="progressive MP4 profile (name@level)")
     g.add_argument("--mp4-overlay",
                    type=str,
