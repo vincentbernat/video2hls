@@ -169,9 +169,9 @@ def parse_args():
     g.add_argument("--poster-seek", metavar="POSITION",
                    default="5%",
                    help="seek to the given position (5% or 15s)")
-    g.add_argument("--poster-size", metavar="HEIGHT",
+    g.add_argument("--poster-height", metavar="HEIGHT",
                    type=int,
-                   help="poster size (height in pixels)")
+                   help="poster height (in pixels)")
 
     g = parser.add_argument_group("program options")
     g.add_argument("--ffmpeg", metavar="EXE",
@@ -429,8 +429,8 @@ def poster(options, technical):
 
     # Filter to apply
     vfilter = ['select=eq(pict_type\\,I)']
-    if options.poster_size is not None:
-        vfilter.append(f'scale={options.poster_size}:-2')
+    if options.poster_height is not None:
+        vfilter.append(f'scale=-2:{options.poster_height}')
 
     # Quality
     quality = options.poster_quality * 30 // 100
@@ -477,7 +477,7 @@ def transcode(options, technical):
     # Progressive MP4
     if options.mp4:
         logger.debug('setup MP4 progressive output')
-        vfilters = [f'scale={options.mp4_height}:-2',
+        vfilters = [f'scale=-2:{options.mp4_height}',
                     'format=yuv420p']
         if options.mp4_overlay:
             with open('_mp4.txt', 'w', encoding='utf-8') as f:
@@ -532,7 +532,7 @@ def transcode(options, technical):
                         codec=options.video_codecs[idx],
                         name=options.video_names[idx],
                         profile=options.video_profiles[idx])
-        vfilters = [f'scale={options.video_heights[idx]}:-2']
+        vfilters = [f'scale=-2:{options.video_heights[idx]}']
         if options.video_overlay:
             with open(f'_{idx}.txt', 'w') as f:
                 f.write(options.video_overlay.format(**voptions))
