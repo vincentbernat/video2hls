@@ -434,78 +434,83 @@ def transcode(options, technical):
         args += (options.mp4_filename,)
 
     # HLS
+    playlists = {}
+    for idx in range(len(options.video_heights)):
+        if (options.video_heights[idx] > height) and \
+           (options.video_heights[idx] * width / height > width):
+            logger.debug(f'skip {options.video_heights[idx]}p resolution')
+            continue
+        logger.debug(f'setup HLS for {options.video_names[idx]}')
+        voptions = dict(height=options.video_heights[idx],
+                        bitrate=options.video_bitrates[idx],
+                        codec=options.video_codecs[idx],
+                        name=options.video_names[idx],
+                        profile=options.video_profiles[idx])
+        vfilters = [f'scale={options.video_heights[idx]}:-2']
+        if options.video_overlay:
+            with open(f'{idx}.txt', 'w') as f:
+                f.write(options.video_overlay.format(**voptions))
+            vfilters.insert(0,
+                            'drawtext=x=10: y=10: '
+                            f'textfile={idx}.txt: fontsize=48: '
+                            'fontcolor=white@0.5: '
+                            'borderw=3: bordercolor=black@0.5')
+        args += ('-f', 'hls',    # Output format is HLS
+                 # Apply filters
+                 '-vf', ','.join(vfilters),
+                 # Select appropriate codec
+                 '-c:v', options.video_codecs[idx],
+                 # Select appropriate profile
+                 '-profile:v', options.video_profiles[idx].split("@")[0],
+                 '-level:v', options.video_profiles[idx].split("@")[1],
+                 # Enforce maximum bitrate
+                 '-b:v', f'{options.video_bitrates[idx]}k',
+                 '-maxrate:v', f'{options.video_bitrates[idx]}k',
+                 '-bufsize:v', f'{options.video_bitrates[idx]*1.5}k')
+        if audio:
+            # Audio codec
+            args += ('-c:a', options.audio_codec)
+            # Audio sampling rate
+            if options.audio_sampling:
+                args += ('-ar', f'{options.audio_sampling}')
+            else:
+                args += ('-ar', f'{sampling}')
+            # Profile and bitrate
+            args += ('-profile:a', options.audio_profile,
+                     '-b:a', f'{options.audio_bitrate}k')
+        # HLS options
+        args += ('-hls_time', f'{options.hls_time}',
+                 '-g', f'{keyf}', '-keyint_min', f'{keyf}',
+                 '-hls_playlist_type', 'vod',
+                 '-hls_list_size', '0',
+                 '-hls_segment_type', options.hls_type,
+                 '-hls_base_url', options.hls_segment_prefix,
+                 '-hls_segment_filename',
+                 ".".join([options.hls_segments.format(
+                     index=f'{idx}_%03d', **voptions),
+                           {'mpegts': 'ts',
+                            'fmp4': 'mp4'}[options.hls_type]]))
+        if options.hls_type == 'fmp4':
+            args += ('-hls_fmp4_init_filename',
+                     ".".join([options.hls_segments.format(
+                         index='{idx}_init', **voptions),
+                               'mp4']))
+
+        # Output filename
+        playlist_name = ".".join([options.hls_segments.format(
+            index=f'{idx}', **voptions),
+                                  'm3u8'])
+        args += (playlist_name,)
+        playlists[idx] = playlist_name
+
+    logger.info('start transcoding')
+    run(options, 'ffmpeg', '-loglevel', 'error', *args)
+
+    logger.info('write master playlist')
     with open(options.hls_master_playlist, "w", encoding='utf-8') as master:
         master.write('#EXTM3U\n')
         master.write('#EXT-X-VERSION:3\n')
-
-        for idx in range(len(options.video_heights)):
-            if (options.video_heights[idx] > height) and \
-               (options.video_heights[idx] * width / height > width):
-                logger.debug(f'skip {options.video_heights[idx]}p resolution')
-                continue
-            logger.debug(f'setup HLS for {options.video_names[idx]}')
-            voptions = dict(height=options.video_heights[idx],
-                            bitrate=options.video_bitrates[idx],
-                            codec=options.video_codecs[idx],
-                            name=options.video_names[idx],
-                            profile=options.video_profiles[idx])
-            vfilters = [f'scale={options.video_heights[idx]}:-2']
-            if options.video_overlay:
-                with open(f'{idx}.txt', 'w') as f:
-                    f.write(options.video_overlay.format(**voptions))
-                vfilters.insert(0,
-                                'drawtext=x=10: y=10: '
-                                f'textfile={idx}.txt: fontsize=48: '
-                                'fontcolor=white@0.5: '
-                                'borderw=3: bordercolor=black@0.5')
-            args += ('-f', 'hls',    # Output format is HLS
-                     # Apply filters
-                     '-vf', ','.join(vfilters),
-                     # Select appropriate codec
-                     '-c:v', options.video_codecs[idx],
-                     # Select appropriate profile
-                     '-profile:v', options.video_profiles[idx].split("@")[0],
-                     '-level:v', options.video_profiles[idx].split("@")[1],
-                     # Enforce maximum bitrate
-                     '-b:v', f'{options.video_bitrates[idx]}k',
-                     '-maxrate:v', f'{options.video_bitrates[idx]}k',
-                     '-bufsize:v', f'{options.video_bitrates[idx]*1.5}k')
-            if audio:
-                # Audio codec
-                args += ('-c:a', options.audio_codec)
-                # Audio sampling rate
-                if options.audio_sampling:
-                    args += ('-ar', f'{options.audio_sampling}')
-                else:
-                    args += ('-ar', f'{sampling}')
-                # Profile and bitrate
-                args += ('-profile:a', options.audio_profile,
-                         '-b:a', f'{options.audio_bitrate}k')
-            # HLS options
-            args += ('-hls_time', f'{options.hls_time}',
-                     '-g', f'{keyf}', '-keyint_min', f'{keyf}',
-                     '-hls_playlist_type', 'vod',
-                     '-hls_list_size', '0',
-                     '-hls_segment_type', options.hls_type,
-                     '-hls_base_url', options.hls_segment_prefix,
-                     '-hls_segment_filename',
-                     ".".join([options.hls_segments.format(
-                         index=f'{idx}_%03d', **voptions),
-                               {'mpegts': 'ts',
-                                'fmp4': 'mp4'}[options.hls_type]]))
-            if options.hls_type == 'fmp4':
-                args += ('-hls_fmp4_init_filename',
-                         ".".join([options.hls_segments.format(
-                             index='{idx}_init', **voptions),
-                                   'mp4']))
-
-            # Output filename
-            playlist_name = ".".join([options.hls_segments.format(
-                index=f'{idx}', **voptions),
-                                      'm3u8'])
-            args += (playlist_name,)
-
-            # Master playlist
+        for idx in playlists:
             master.write(
                 '#EXT-X-STREAM-INF:'
                 f'BANDWIDTH={options.video_bitrates[idx]}000,'
@@ -513,11 +518,7 @@ def transcode(options, technical):
                 f'{options.video_heights[idx]},'
                 f'FRAME-RATE={fps:.4},'
                 f'NAME="{options.video_names[idx]}"\n'
-                f'{options.hls_playlist_prefix}{playlist_name}\n')
-
-    logger.info('start transcoding')
-    run(options, 'ffmpeg', '-loglevel', 'error', *args)
-    logger.info('end of transcoding')
+                f'{options.hls_playlist_prefix}{playlists[idx]}\n')
 
 
 if __name__ == "__main__":
