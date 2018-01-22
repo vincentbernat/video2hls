@@ -1,0 +1,541 @@
+#!/usr/bin/python3
+
+"""Convert a video into a set of files to play it using HLS.
+
+The video will be converted to different resolutions, using different
+bitrates. A master playlist will be generated to be processed by an
+HLS client. A progressive MP4 version is also produced (to be used as
+a fallback), as well as a poster image.
+
+There are many options, but not all of them are safe to change. For
+example, HLS is usually expecting AAC-LC as a codec for audio. This
+can be changed, but this may not work in all browsers.
+
+One important option is ``--hls-type``. Choosing ``fmp4`` is more
+efficient but is only compatible with iOS 10+.
+
+Most video options take several parameters (space-separated). It is
+better to ensure the same length is used for all options, otherwise
+the shorter list will be extended by repeating the last value. Only
+the heights can be provided and aspect ratio is always kept.
+
+The ``--video-overlay`` enables to overlay a text with technical
+information about the video on each video. The value is a pattern like
+``{height}p``. The allowed variables in pattern are the ones specified
+as a video option. Same applies for ``--mp4-overlay``.
+
+The audio options are global as audio need to be switched seamlessly
+between segments and it is not possible when using different bitrates
+or options.
+
+The default output directory is the basename of the input video.
+
+"""
+
+import argparse
+import json
+import logging
+import logging.handlers
+import operator
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+logger = logging.getLogger("video2hls")
+
+
+def parse_args():
+    """Parse arguments."""
+    parser = argparse.ArgumentParser(
+        description=sys.modules[__name__].__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+
+    g = parser.add_mutually_exclusive_group()
+    g.add_argument("--debug", "-d", action="store_true",
+                   default=False,
+                   help="enable debugging")
+    g.add_argument("--silent", "-s", action="store_true",
+                   default=False,
+                   help="don't log to console")
+
+    g = parser.add_argument_group("hls options")
+    g.add_argument("--hls-type", metavar="TYPE",
+                   default="mpegts",
+                   choices=("mpegts", "fmp4"),
+                   help="HLS segment type")
+    g.add_argument("--hls-time", metavar="DURATION",
+                   default=6,
+                   type=int,
+                   help="HLS segment duration (in seconds)")
+    g.add_argument("--hls-segments", metavar="FILENAMES",
+                   default="{height}p_{index}",
+                   help="pattern to use for HLS segment files")
+    g.add_argument("--hls-segment-prefix", metavar="PREFIX",
+                   default="", type=str,
+                   help="prefix to use for segments in media playlists")
+    g.add_argument('--hls-master-playlist', metavar='NAME',
+                   default='index.m3u8', type=str,
+                   help='master playlist name')
+
+    g = parser.add_argument_group("video options")
+    g.add_argument("--video-heights", metavar="HEIGHT",
+                   default=[1080, 720, 480, 360, 240],
+                   nargs="+", type=int,
+                   help="video resolution (height in pixels)")
+    g.add_argument("--video-bitrates", metavar="RATE",
+                   default=[4500, 2500, 1250, 700, 400],
+                   nargs="+", type=int,
+                   help="video bitrates (in kbits/s)")
+    g.add_argument("--video-codecs", metavar="CODEC",
+                   default=["h264"],
+                   nargs="+", type=str,
+                   help="video codecs")
+    g.add_argument("--video-profiles", metavar="PROFILE",
+                   default=["baseline@3.0"],
+                   nargs="+", type=str,
+                   help="video profile (name@level)")
+    g.add_argument("--video-names", metavar="NAME",
+                   default=[],
+                   nargs="+", type=str,
+                   help="video name (used in playlists)")
+    g.add_argument("--video-overlay",
+                   type=str,
+                   help="add an overlay with technical info about the video")
+
+    g = parser.add_argument_group("audio options")
+    g.add_argument("--no-audio", action="store_false",
+                   default=True, dest="audio",
+                   help="remove audio track")
+    g.add_argument("--audio-sampling", metavar="RATE",
+                   type=int,
+                   help="audio sampling rate")
+    g.add_argument("--audio-bitrate", metavar="RATE",
+                   default=96,
+                   type=int,
+                   help="audio bitrate (in kbits)")
+    g.add_argument("--audio-codec", metavar="CODEC",
+                   default="aac",
+                   help="audio codec")
+    g.add_argument("--audio-profile", metavar="PROFILE",
+                   default="aac_low",
+                   help="audio profile")
+
+    g = parser.add_argument_group("progressive MP4 options")
+    g.add_argument("--no-mp4", action="store_false",
+                   default=True, dest="mp4",
+                   help="disable progressive MP4 version")
+    g.add_argument("--mp4-height", metavar="HEIGHT",
+                   type=int,
+                   default=720,
+                   help="progressive MP4 resolution (height in pixels)")
+    g.add_argument("--mp4-bitrate", metavar="RATE",
+                   type=int,
+                   default=2000,
+                   help="progressive MP4 bitrate (in kbits/s)")
+    g.add_argument("--mp4-codec", metavar="CODEC",
+                   type=str,
+                   default="h264",
+                   help="progressive MP4 codec")
+    g.add_argument("--mp4-profile", metavar="PROFILE",
+                   type=str,
+                   default="baseline@3.0",
+                   help="progressive MP4 profile (name@level)")
+    g.add_argument("--mp4-overlay",
+                   type=str,
+                   help="add an overlay with technical info about the video")
+    g.add_argument("--mp4-filename", metavar="NAME",
+                   type=str,
+                   default="progressive.mp4",
+                   help="filename for progressive MP4")
+
+    g = parser.add_argument_group("poster option")
+    g.add_argument("--no-poster", action="store_false",
+                   default=True, dest="poster",
+                   help="disable poster image")
+    g.add_argument("--poster-quality", metavar="Q",
+                   default=10,
+                   type=int,
+                   help="poster quality (from 0 to 100)")
+    g.add_argument("--poster-name", metavar="FILE",
+                   default="poster.jpg",
+                   type=str,
+                   help="poster filename")
+    g.add_argument("--poster-seek", metavar="POSITION",
+                   default="5%",
+                   help="seek to the given position (5% or 15s)")
+    g.add_argument("--poster-size", metavar="HEIGHT",
+                   type=int,
+                   help="poster size (height in pixels)")
+
+    g = parser.add_argument_group("program options")
+    g.add_argument("--ffmpeg", metavar="EXE",
+                   default="ffmpeg",
+                   help="ffmpeg executable name")
+    g.add_argument("--ffprobe", metavar="EXE",
+                   default="ffprobe",
+                   help="ffprobe executable name")
+
+    parser.add_argument("--output", metavar="DIR",
+                        help="output directory")
+    parser.add_argument("--output-overwrite", action="store_true",
+                        default=False,
+                        help="overwrite output directory if it exists")
+    parser.add_argument("input", metavar="VIDEO",
+                        help="video to be converted")
+
+    options = parser.parse_args()
+
+    # If needed, extend video options to the same length
+    video_options = [option
+                     for option in vars(options)
+                     if option.startswith("video_") and option.endswith("s")]
+    max_length = max(len(vars(options)[option]) for option in video_options)
+    for option in video_options:
+        if option == "video_names":
+            continue
+        value = vars(options)[option]
+        diff = max_length - len(value)
+        if diff > 0:
+            # Copy last value
+            value.extend([value[-1]] * diff)
+
+    # Handle video names
+    if len(options.video_names) < max_length:
+        diff = max_length - len(options.video_names)
+        options.video_names.extend(
+            ["{}p".format(x) for x in options.video_heights][-diff:])
+
+    # Handle output directory
+    if options.output is None:
+        options.output = os.path.splitext(options.input)[0]
+        if options.output == options.input:
+            options.output += "_output"
+    options.output = os.path.abspath(options.output)
+
+    return options
+
+
+class ColorizingStreamHandler(logging.StreamHandler):
+    """Provide a nicer logging output to error output with colors."""
+    color_map = dict([(x, i)
+                      for i, x in enumerate('black red green yellow blue '
+                                            'magenta cyan white'.split(" "))])
+    level_map = {
+        logging.DEBUG:    (None,  'blue',   " DBG"),
+        logging.INFO:     (None,  'green',  "INFO"),
+        logging.WARNING:  (None,  'yellow', "WARN"),
+        logging.ERROR:    (None,  'red',    " ERR"),
+        logging.CRITICAL: ('red', 'white',  "CRIT")
+        }
+    csi = '\x1b['
+    reset = '\x1b[0m'
+
+    @property
+    def is_tty(self):
+        isatty = getattr(self.stream, 'isatty', None)
+        return isatty and isatty()
+
+    def format(self, record):
+        message = logging.StreamHandler.format(self, record)
+        params = []
+        levelno = record.levelno
+        if levelno not in self.level_map:
+            levelno = logging.WARNING
+        bg, fg, level = self.level_map[levelno]
+        if bg in self.color_map:
+            params.append(str(self.color_map[bg] + 40))
+        if fg in self.color_map:
+            params.append(str(self.color_map[fg] + 30))
+        params.append("1m")
+        level = "[{}]".format(level)
+        return "\n".join(["{}: {}".format(
+            self.is_tty and params and ''.join((self.csi, ';'.join(params),
+                                                level, self.reset)) or level,
+            line) for line in message.split('\n')])
+
+
+def setup_logging(options):
+    """Configure logging."""
+    root = logging.getLogger("")
+    root.setLevel(logging.WARNING)
+    logger.setLevel(options.debug and logging.DEBUG or logging.INFO)
+    if not options.silent:
+        root.addHandler(ColorizingStreamHandler())
+
+
+def run(options, what, *args):
+    """Execute either ffmpeg or ffprobe with the provided arguments."""
+    if what in {"ffprobe", "ffmpeg"}:
+        what = getattr(options, what)
+
+    jargs = " ".join(args)
+    logger.debug(f"execute {what} {jargs}")
+    proc = subprocess.Popen((what,) + args,
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate(None)
+    stdout = stdout.decode('utf-8')
+    stderr = stderr.decode('utf-8')
+
+    if proc.returncode != 0:
+        logger.error("{} error:\n{}\n{}\n{}".format(
+            what,
+            f" A: {jargs}",
+            "\n".join([" O: {}".format(l)
+                       for l in stdout.rstrip().split("\n")]),
+            "\n".join([" E: {}".format(l)
+                       for l in stderr.rstrip().split("\n")])))
+        raise RuntimeError(f"Unable to execute {what}")
+    return stdout
+
+
+def probe(options):
+    """Probe input file to extract technical information.
+
+    We only keep the first video stream and the first audio
+    stream. This may not be the "best" streams ffmpeg would select.
+
+    """
+    logger.info(f"probe {options.input}")
+    out = run(options, 'ffprobe',
+              '-v', 'quiet',            # don't display any status message
+              '-print_format', 'json',  # JSON output
+              '-show_streams',          # get stream information
+              options.input)
+    info = json.loads(out)
+    streams = info['streams']
+
+    # Only keep first audio and first video
+    return {
+        'video': ([x for x in streams
+                   if x['codec_type'] == 'video'] or [None])[0],
+        'audio': ([x for x in streams
+                   if x['codec_type'] == 'audio'] or [None])[0]
+    }
+
+
+def poster(options, technical):
+    """Create poster."""
+    if not options.poster:
+        logger.debug('skip poster creation')
+        return
+    logger.debug('create poster')
+
+    # Determine position
+    mo = re.match(r'(?:(?P<percent>\d+)%|(?P<seconds>\d+)s)',
+                  options.poster_seek)
+    if not mo:
+        raise RuntimeError(f'invalid value for poster seek: '
+                           f'{options.poster_seek}')
+    if mo.group('percent'):
+        percent = int(mo.group('percent'))
+        seek = float(technical['video']['duration'])*percent / 100
+    else:
+        seek = mo.group('seconds')
+    seek = int(seek)
+    logger.debug(f'seek position for poster is {seek}s')
+
+    # Filter to apply
+    vfilter = ['select=eq(pict_type\\,I)']
+    if options.poster_size is not None:
+        vfilter.append(f'scale={options.poster_size}:-2')
+
+    # Quality
+    quality = options.poster_quality * 30 // 100
+    quality = 30 - quality + 1
+
+    args = ('-ss', f'{seek}',          # seek to the given position
+            '-i', f'{options.input}',  # load input file
+            # Only keep video
+            '-map', f'0:{technical["video"]["index"]}',
+            '-frames:v', '1',          # take only one frame
+            '-an',                     # remove audio
+            '-vf', ",".join(vfilter),  # apply filter
+            '-qscale:v', f'{quality}',
+            options.poster_name)       # output file
+    run(options, 'ffmpeg', '-loglevel', 'error', *args)
+    logger.info(f'poster {options.poster_name} created')
+
+
+def transcode(options, technical):
+    """Create transcoded files."""
+    logger.debug('create transcoded files')
+    video = technical['video']
+    audio = technical['audio']
+
+    # Grab interesting facts about video
+    height = int(video['height'])
+    width = int(video['width'])
+    fps = video['r_frame_rate']
+    fps = operator.truediv(*(int(x) for x in fps.split('/')))
+    keyf = int(fps * options.hls_time)
+    logger.info(f'input video is {width}x{height} at {fps}fps')
+    if audio:
+        channels = audio['channels']
+        sampling = audio['sample_rate']
+        logger.info(f'input audio is {channels} channels at {sampling}Hz')
+
+    # Input video
+    args = ('-i', options.input,            # Input video
+            '-map', f'0:{video["index"]}')  # Keep video track
+    if audio:
+        # Keep audio track
+        args += ('-map', f'0:{audio["index"]}')
+
+    # Progressive MP4
+    if options.mp4:
+        logger.debug('setup MP4 progressive output')
+        vfilters = [f'scale={options.mp4_height}:-2',
+                    'format=yuv420p']
+        if options.mp4_overlay:
+            with open('mp4.txt', 'w') as f:
+                f.write(options.mp4_overlay.format(
+                    height=options.mp4_height,
+                    bitrate=options.mp4_bitrate,
+                    codec=options.mp4_codec,
+                    profile=options.mp4_profile))
+            vfilters.insert(0,
+                            'drawtext=x=10: y=10: '
+                            'textfile=mp4.txt: fontsize=48: '
+                            'fontcolor=white@0.5: '
+                            'borderw=3: bordercolor=black@0.5')
+        args += ('-f', 'mp4',    # Output format is MP4
+                 # Apply filters
+                 '-vf', ','.join(vfilters),
+                 # Select appropriate codec
+                 '-c:v', options.mp4_codec,
+                 # Select appropriate profile
+                 '-profile:v', options.mp4_profile.split("@")[0],
+                 '-level:v', options.mp4_profile.split("@")[1],
+                 # Enforce maximum bitrate
+                 '-b:v', f'{options.mp4_bitrate}k',
+                 '-maxrate:v', f'{options.mp4_bitrate}k',
+                 '-bufsize:v', f'{options.mp4_bitrate*1.5}k')
+        if audio:
+            # Audio codec
+            args += ('-c:a', options.audio_codec)
+            # Audio sampling rate
+            if options.audio_sampling:
+                args += ('-ar', f'{options.audio_sampling}')
+            else:
+                args += ('-ar', f'{sampling}')
+            # Profile and bitrate
+            args += ('-profile:a', options.audio_profile,
+                     '-b:a', f'{options.audio_bitrate}k')
+        # Move index at the beginning
+        args += ('-movflags', '+faststart')
+        # Output filename
+        args += (options.mp4_filename,)
+
+    # HLS
+    for idx in range(len(options.video_heights)):
+        if (options.video_heights[idx] > height) and \
+           (options.video_heights[idx] * width / height > width):
+            logger.debug(f'skip {options.video_heights[idx]}p resolution')
+            continue
+        logger.debug(f'setup HLS for {options.video_names[idx]}')
+        voptions = dict(height=options.video_heights[idx],
+                        bitrate=options.video_bitrates[idx],
+                        codec=options.video_codecs[idx],
+                        name=options.video_names[idx],
+                        profile=options.video_profiles[idx])
+        vfilters = [f'scale={options.video_heights[idx]}:-2']
+        if options.video_overlay:
+            with open(f'{idx}.txt', 'w') as f:
+                f.write(options.video_overlay.format(**voptions))
+            vfilters.insert(0,
+                            'drawtext=x=10: y=10: '
+                            f'textfile={idx}.txt: fontsize=48: '
+                            'fontcolor=white@0.5: '
+                            'borderw=3: bordercolor=black@0.5')
+        args += ('-f', 'hls',    # Output format is HLS
+                 # Apply filters
+                 '-vf', ','.join(vfilters),
+                 # Select appropriate codec
+                 '-c:v', options.video_codecs[idx],
+                 # Select appropriate profile
+                 '-profile:v', options.video_profiles[idx].split("@")[0],
+                 '-level:v', options.video_profiles[idx].split("@")[1],
+                 # Enforce maximum bitrate
+                 '-b:v', f'{options.video_bitrates[idx]}k',
+                 '-maxrate:v', f'{options.video_bitrates[idx]}k',
+                 '-bufsize:v', f'{options.video_bitrates[idx]*1.5}k')
+        if audio:
+            # Audio codec
+            args += ('-c:a', options.audio_codec)
+            # Audio sampling rate
+            if options.audio_sampling:
+                args += ('-ar', f'{options.audio_sampling}')
+            else:
+                args += ('-ar', f'{sampling}')
+            # Profile and bitrate
+            args += ('-profile:a', options.audio_profile,
+                     '-b:a', f'{options.audio_bitrate}k')
+        # HLS options
+        args += ('-hls_time', f'{options.hls_time}',
+                 '-g', f'{keyf}', '-keyint_min', f'{keyf}',
+                 '-hls_playlist_type', 'vod',
+                 '-hls_list_size', '0',
+                 '-hls_segment_type', options.hls_type,
+                 '-hls_base_url', options.hls_segment_prefix,
+                 '-hls_segment_filename',
+                 ".".join([options.hls_segments.format(index=f'{idx}_%03d',
+                                                       **voptions),
+                           {'mpegts': 'ts',
+                            'fmp4': 'mp4'}[options.hls_type]]))
+        if options.hls_type == 'fmp4':
+            args += ('-hls_fmp4_init_filename',
+                     ".".join([options.hls_segments.format(index='{idx}_init',
+                                                           **voptions),
+                               'mp4']))
+
+        # Output filename
+        args += (".".join([options.hls_segments.format(index=f'{idx}',
+                                                       **voptions),
+                           'm3u8']),)
+
+    logger.info('start transcoding')
+    run(options, 'ffmpeg', '-loglevel', 'error', *args)
+    logger.info('end of transcoding')
+
+
+if __name__ == "__main__":
+    options = parse_args()
+    setup_logging(options)
+
+    try:
+        # Log current settings
+        logger.debug("current settings:")
+        for k, v in vars(options).items():
+            logger.debug(f" {k} = {v}")
+
+        # Create output directory
+        try:
+            logger.debug(f"create directory {options.output}")
+            os.makedirs(options.output)
+        except FileExistsError:
+            if options.output_overwrite:
+                logger.info(f"delete existing {options.output}")
+                shutil.rmtree(options.output)
+                os.makedirs(options.output)
+            else:
+                raise
+
+        # Change directory
+        options.input = os.path.relpath(options.input, options.output)
+        os.chdir(options.output)
+
+        # Probe input file
+        technical = probe(options)
+        if technical['video'] is None:
+            raise RuntimeError(f'no video track in {options.input}')
+
+        poster(options, technical)
+        transcode(options, technical)
+
+    except Exception as e:
+        logger.exception("%s", e)
+        sys.exit(1)
