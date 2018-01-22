@@ -33,6 +33,7 @@ The default output directory is the basename of the input video.
 """
 
 import argparse
+import glob
 import json
 import logging
 import logging.handlers
@@ -479,7 +480,7 @@ def transcode(options, technical):
         vfilters = [f'scale={options.mp4_height}:-2',
                     'format=yuv420p']
         if options.mp4_overlay:
-            with open('mp4.txt', 'w', encoding='utf-8') as f:
+            with open('_mp4.txt', 'w', encoding='utf-8') as f:
                 f.write(options.mp4_overlay.format(
                     height=options.mp4_height,
                     bitrate=options.mp4_bitrate,
@@ -487,7 +488,7 @@ def transcode(options, technical):
                     profile=options.mp4_profile))
             vfilters.insert(0,
                             'drawtext=x=10: y=10: '
-                            'textfile=mp4.txt: fontsize=48: '
+                            'textfile=_mp4.txt: fontsize=48: '
                             'fontcolor=white@0.5: '
                             'borderw=3: bordercolor=black@0.5')
         args += ('-f', 'mp4',    # Output format is MP4
@@ -533,11 +534,11 @@ def transcode(options, technical):
                         profile=options.video_profiles[idx])
         vfilters = [f'scale={options.video_heights[idx]}:-2']
         if options.video_overlay:
-            with open(f'{idx}.txt', 'w') as f:
+            with open(f'_{idx}.txt', 'w') as f:
                 f.write(options.video_overlay.format(**voptions))
             vfilters.insert(0,
                             'drawtext=x=10: y=10: '
-                            f'textfile={idx}.txt: fontsize=48: '
+                            f'textfile=_{idx}.txt: fontsize=48: '
                             'fontcolor=white@0.5: '
                             'borderw=3: bordercolor=black@0.5')
         hargs = ('-vf', ','.join(vfilters),
@@ -656,6 +657,9 @@ if __name__ == "__main__":
 
         poster(options, technical)
         transcode(options, technical)
+
+        for f in glob.glob('_*'):
+            os.remove(f)
 
     except Exception as e:
         logger.exception("%s", e)
