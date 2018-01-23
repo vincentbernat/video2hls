@@ -47,11 +47,16 @@ import sys
 logger = logging.getLogger("video2hls")
 
 
+class CustomFormatter(argparse.RawDescriptionHelpFormatter,
+                      argparse.ArgumentDefaultsHelpFormatter):
+    pass
+
+
 def parse_args():
     """Parse arguments."""
     parser = argparse.ArgumentParser(
         description=sys.modules[__name__].__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter_class=CustomFormatter)
 
     g = parser.add_mutually_exclusive_group()
     g.add_argument("--debug", "-d", action="store_true",
