@@ -497,7 +497,7 @@ def transcode(options, technical):
     fps = video['r_frame_rate']
     fps = operator.truediv(*(int(x) for x in fps.split('/')))
     keyf = int(fps * options.hls_time)
-    logger.info(f'input video is {width}x{height} at {fps:.4}fps')
+    logger.info(f'input video is {width}x{height} at {fps:,.2f}fps')
     if audio:
         channels = audio['channels']
         sampling = audio['sample_rate']
@@ -665,7 +665,7 @@ def transcode(options, technical):
             if codecs:
                 master.write(f'CODECS="{codecs}",')
             master.write(
-                f'FRAME-RATE={fps:.4},'
+                f'FRAME-RATE={fps:,.3f},'
                 f'NAME="{options.video_names[idx]}"\n'
                 f'{options.hls_playlist_prefix}{playlists[idx]["name"]}\n')
 
