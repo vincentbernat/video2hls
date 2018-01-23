@@ -37,6 +37,7 @@ import glob
 import json
 import logging
 import logging.handlers
+import math
 import operator
 import os
 import re
@@ -536,7 +537,7 @@ def transcode(options, technical):
     width = int(video['width'])
     fps = video['r_frame_rate']
     fps = operator.truediv(*(int(x) for x in fps.split('/')))
-    keyf = int(fps * options.hls_time)
+    keyf = math.ceil(fps * options.hls_time)
     logger.info(f'input video is {width}x{height} at {fps:,.2f}fps')
     if audio:
         channels = audio['channels']
