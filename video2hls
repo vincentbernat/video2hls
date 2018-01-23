@@ -90,7 +90,7 @@ def parse_args():
     g.add_argument("--video-widths", metavar="WIDTH",
                    default=[3840, 1920, 1280, 854, 640, 428],
                    nargs="+", type=int,
-                   help="video resolution (width in pixels)")
+                   help="video resolutions (width in pixels)")
     g.add_argument("--video-bitrates", metavar="RATE",
                    default=[14000, 4500, 2500, 1300, 800, 500],
                    nargs="+", type=int,
@@ -107,7 +107,7 @@ def parse_args():
                    default=[],
                    nargs="+", type=str,
                    help="video name (used in playlists)")
-    g.add_argument("--video-overlay",
+    g.add_argument("--video-overlay", metavar="TEXT",
                    type=str,
                    help="add an overlay with technical info about the video")
     g.add_argument("--video-bitrate-factor",
@@ -153,7 +153,7 @@ def parse_args():
                    type=str,
                    default="main@3.1",
                    help="progressive MP4 profile (name@level)")
-    g.add_argument("--mp4-overlay",
+    g.add_argument("--mp4-overlay", metavar="TEXT",
                    type=str,
                    help="add an overlay with technical info about the video")
     g.add_argument("--mp4-filename", metavar="NAME",
@@ -173,7 +173,7 @@ def parse_args():
                    default="poster.jpg",
                    type=str,
                    help="poster filename")
-    g.add_argument("--poster-seek", metavar="POSITION",
+    g.add_argument("--poster-seek", metavar="POS",
                    default="5%",
                    help="seek to the given position (5%% or 15s)")
     g.add_argument("--poster-width", metavar="WIDTH",
