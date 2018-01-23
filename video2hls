@@ -92,7 +92,7 @@ def parse_args():
                    nargs="+", type=int,
                    help="video resolutions (width in pixels)")
     g.add_argument("--video-bitrates", metavar="RATE",
-                   default=[14000, 4500, 2500, 1300, 800, 500],
+                   default=[14000, 4500, 2500, 1300, 800, 400],
                    nargs="+", type=int,
                    help="video bitrates (in kbits/s)")
     g.add_argument("--video-codecs", metavar="CODEC",
