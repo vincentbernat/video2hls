@@ -175,7 +175,7 @@ def parse_args():
                    help="poster filename")
     g.add_argument("--poster-seek", metavar="POSITION",
                    default="5%",
-                   help="seek to the given position (5% or 15s)")
+                   help="seek to the given position (5%% or 15s)")
     g.add_argument("--poster-width", metavar="WIDTH",
                    type=int,
                    default="1280",
