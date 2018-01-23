@@ -92,7 +92,7 @@ def parse_args():
                    nargs="+", type=int,
                    help="video resolution (width in pixels)")
     g.add_argument("--video-bitrates", metavar="RATE",
-                   default=[4500, 2500, 1250, 700, 400],
+                   default=[4500, 2500, 1300, 800, 500],
                    nargs="+", type=int,
                    help="video bitrates (in kbits/s)")
     g.add_argument("--video-codecs", metavar="CODEC",
@@ -110,6 +110,10 @@ def parse_args():
     g.add_argument("--video-overlay",
                    type=str,
                    help="add an overlay with technical info about the video")
+    g.add_argument("--video-bitrate-factor",
+                   type=float,
+                   default=1.0,
+                   help="factor to apply to provided bitrates")
 
     g = parser.add_argument_group("audio options")
     g.add_argument("--no-audio", action="store_false",
@@ -224,6 +228,12 @@ def parse_args():
         options.video_names.extend(
             ["{}p".format(int(x/options.ratio))
              for x in options.video_widths][-diff:])
+
+    # Add bitrate factor to bitrates
+    options.video_bitrates = [int(r*options.video_bitrate_factor)
+                              for r in options.video_bitrates]
+    options.mp4_bitrate = int(options.mp4_bitrate *
+                              options.video_bitrate_factor)
 
     # Handle output directory
     if options.output is None:
