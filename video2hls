@@ -663,6 +663,7 @@ def transcode(options, technical):
             *hargs,
             '# duration of an HLS segment',
             '-hls_time', f'{options.hls_time}',
+            '# this is fairly important:',
             '# set I-frame at the beginning of each segment',
             '-g', f'{keyf}', '-keyint_min', f'{keyf}',
             '# set HLS playlist type',
@@ -700,7 +701,7 @@ def transcode(options, technical):
             args += (
                 '# also generate a small MP4 to extract codec later',
                 '-f', 'mp4',
-                '# use same encoding arguments as the normal video',
+                '# use same encoding arguments as the normal video:',
                 *hargs,
                 '# but keep only one frame',
                 '-frames:v', '1',
