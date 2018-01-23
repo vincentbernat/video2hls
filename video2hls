@@ -397,8 +397,8 @@ def extract_codecs(options, sample):
                         if mo and mo.group('attribute') == 'objectTypeId':
                             oti = int(mo.group('value'))
                         elif 'decSpecificInfo' in line:
-                            osti = True
-                        elif osti is True:
+                            osti = ...  # Parse the next line
+                        elif osti is ...:
                             mo = info_re.match(line)
                             if not mo:
                                 raise RuntimeError('cannot decode '
