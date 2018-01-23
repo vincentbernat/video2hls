@@ -665,7 +665,7 @@ def transcode(options, technical):
             '# duration of an HLS segment',
             '-hls_time', f'{options.hls_time}',
             '# this is fairly important:',
-            '# set I-frame at the beginning of each segment',
+            f'# set I-frame at the beginning of each segment (fps={fps:,.3f})',
             '-g', f'{keyf}', '-keyint_min', f'{keyf}',
             '# set HLS playlist type',
             '-hls_playlist_type', 'vod',
