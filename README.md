@@ -37,3 +37,8 @@ Specify more bitrates:
                 --video-widths 1920 1920 1280 854 \
                 --video-names '1080p high' '1080p low'
        TearsOfSteel.mp4
+
+When using `--debug`, you'll get a detailed explanation of the
+commandes executed (and you can copy/paste them):
+
+    ./video2hls --debug TearsOfSteel.mp4

@@ -40,6 +40,7 @@ import logging.handlers
 import operator
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -300,13 +301,32 @@ def setup_logging(options):
 
 
 def run(options, what, *args):
-    """Execute either ffmpeg or ffprobe with the provided arguments."""
+    """Execute either ffmpeg or ffprobe with the provided arguments.
+
+    Comments are filtered out, except when displaying to user.
+
+    """
     if what in {"ffprobe", "ffmpeg", "mp4file"}:
         what = getattr(options, what)
 
-    jargs = " ".join(args)
+    # Pretty format arguments
+    jargs = []
+    for arg in args:
+        if arg.startswith('# '):
+            jargs.append(f'`{arg}`')
+        else:
+            if not jargs or jargs[-1].startswith('`'):
+                jargs.append(f' {shlex.quote(arg)}')
+            else:
+                jargs[-1] += f' {shlex.quote(arg)}'
+    if jargs and jargs[0].startswith('`'):
+        jargs.insert(0, '')
+    jargs = " \\\n   ".join(jargs)
     logger.debug(f"execute {what} {jargs}")
-    proc = subprocess.Popen((what,) + args,
+
+    proc = subprocess.Popen([what] + [arg
+                                      for arg in args
+                                      if not arg.startswith('# ')],
                             stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
@@ -335,9 +355,13 @@ def probe(options):
     """
     logger.info(f"probe {options.input}")
     out = run(options, 'ffprobe',
-              '-v', 'quiet',            # don't display any status message
-              '-print_format', 'json',  # JSON output
-              '-show_streams',          # get stream information
+              "# don't display any status message",
+              '-v', 'quiet',
+              "# JSON output",
+              '-print_format', 'json',
+              "# get stream information",
+              '-show_streams',
+              "# input video",
               options.input)
     info = json.loads(out)
     streams = info['streams']
@@ -478,16 +502,26 @@ def poster(options, technical):
     quality = options.poster_quality * 30 // 100
     quality = 30 - quality + 1
 
-    args = ('-ss', f'{seek}',          # seek to the given position
-            '-i', f'{options.input}',  # load input file
-            # Only keep video
+    args = (f'# seek to the given position ({options.poster_seek})',
+            '-ss', f'{seek}',
+            '# load input file',
+            '-i', f'{options.input}',
+            '# Only keep video stream',
             '-map', f'0:{technical["video"]["index"]}',
-            '-frames:v', '1',          # take only one frame
-            '-an',                     # remove audio
-            '-vf', ",".join(vfilter),  # apply filter
+            '# take only one frame',
+            '-frames:v', '1',
+            '# remove audio',
+            '-an',
+            '# filter to select an I-frame and scale',
+            '-vf', ",".join(vfilter),
+            f'# request a JPEG quality ~ {options.poster_quality}',
             '-qscale:v', f'{quality}',
-            options.poster_filename)   # output file
-    run(options, 'ffmpeg', '-loglevel', 'error', *args)
+            '# output file',
+            options.poster_filename)
+    run(options, 'ffmpeg',
+        '# only log errors',
+        '-loglevel', 'error',
+        *args)
     logger.info(f'poster created')
 
 
@@ -510,20 +544,40 @@ def transcode(options, technical):
         logger.info(f'input audio is {channels} channels at {sampling}Hz')
 
     # Input video
-    args = ('-i', options.input,            # Input video
-            '-map', f'0:{video["index"]}')  # Keep video track
+    args = ('# input video',
+            '-i', options.input,
+            '# keep the first video track',
+            '-map', f'0:{video["index"]}')
+    aargs = ()
     if audio:
-        # Keep audio track
-        args += ('-map', f'0:{audio["index"]}')
+        args += (
+            '# also keep the first audio track',
+            '-map', f'0:{audio["index"]}')
+        aargs = (
+            '# select audio codec',
+            '-c:a', options.audio_codec)
+        if options.audio_sampling:
+            aargs += (
+                '# set specified sampling rate',
+                '-ar', f'{options.audio_sampling}')
+        else:
+            aargs += (
+                '# copy original sampling rate',
+                '-ar', f'{sampling}')
+        aargs += (
+            '# select audio profile',
+            '-profile:a', options.audio_profile,
+            '# set audio bitrate',
+            '-b:a', f'{options.audio_bitrate}k')
 
     # Progressive MP4
     if options.mp4:
-        logger.debug('setup MP4 progressive output')
         resolution = int(options.mp4_width/options.ratio)
         twidth, theight = contained_in((width, height),
                                        (options.mp4_width, resolution))
         vfilters = [f'scale={twidth}:{theight}',
                     'format=yuv420p']
+        cfilter = 'apply filters: scale'
         if options.mp4_overlay:
             with open('_mp4.txt', 'w', encoding='utf-8') as f:
                 f.write(options.mp4_overlay.format(
@@ -537,33 +591,28 @@ def transcode(options, technical):
                             'textfile=_mp4.txt: fontsize=48: '
                             'fontcolor=white@0.5: '
                             'borderw=3: bordercolor=black@0.5')
-        args += ('-f', 'mp4',    # Output format is MP4
-                 # Apply filters
-                 '-vf', ','.join(vfilters),
-                 # Select appropriate codec
-                 '-c:v', options.mp4_codec,
-                 # Select appropriate profile
-                 '-profile:v', options.mp4_profile.split("@")[0],
-                 '-level:v', options.mp4_profile.split("@")[1],
-                 # Enforce maximum bitrate
-                 '-b:v', f'{options.mp4_bitrate}k',
-                 '-maxrate:v', f'{options.mp4_bitrate}k',
-                 '-bufsize:v', f'{options.mp4_bitrate*1.5}k')
-        if audio:
-            # Audio codec
-            args += ('-c:a', options.audio_codec)
-            # Audio sampling rate
-            if options.audio_sampling:
-                args += ('-ar', f'{options.audio_sampling}')
-            else:
-                args += ('-ar', f'{sampling}')
-            # Profile and bitrate
-            args += ('-profile:a', options.audio_profile,
-                     '-b:a', f'{options.audio_bitrate}k')
+            cfilter = 'apply filters: add overlay and scale'
+        args += (
+            '# start producing a progressive MP4',
+            '-f', 'mp4',
+            f'# {cfilter}',
+            '-vf', ','.join(vfilters),
+            '# select video codec',
+            '-c:v', options.mp4_codec,
+            '# select video profile and level',
+            '-profile:v', options.mp4_profile.split("@")[0],
+            '-level:v', options.mp4_profile.split("@")[1],
+            '# set maximum video bitrate',
+            '-b:v', f'{options.mp4_bitrate}k',
+            '-maxrate:v', f'{options.mp4_bitrate}k',
+            '-bufsize:v', f'{options.mp4_bitrate*1.5}k')
+        args += aargs
         # Move index at the beginning
-        args += ('-movflags', '+faststart')
-        # Output filename
-        args += (options.mp4_filename,)
+        args += (
+            '# move index at the beginning',
+            '-movflags', '+faststart',
+            '# output filename',
+            options.mp4_filename)
 
     # HLS
     playlists = {}
@@ -585,6 +634,7 @@ def transcode(options, technical):
                                        (options.video_widths[idx], resolution))
         vfilters = [f'scale={twidth}:{theight}',
                     'format=yuv420p']
+        cfilter = 'apply filters: scale'
         if options.video_overlay:
             with open(f'_{idx}.txt', 'w') as f:
                 f.write(options.video_overlay.format(**voptions))
@@ -593,48 +643,50 @@ def transcode(options, technical):
                             f'textfile=_{idx}.txt: fontsize=48: '
                             'fontcolor=white@0.5: '
                             'borderw=3: bordercolor=black@0.5')
-        hargs = ('-vf', ','.join(vfilters),
-                 # Select appropriate codec
+            cfilter = 'apply filters: add overlay and scale'
+        hargs = (f'# {cfilter}',
+                 '-vf', ','.join(vfilters),
+                 '# select video codec',
                  '-c:v', options.video_codecs[idx],
-                 # Select appropriate profile
+                 '# select video profile and level',
                  '-profile:v', options.video_profiles[idx].split("@")[0],
                  '-level:v', options.video_profiles[idx].split("@")[1],
-                 # Enforce maximum bitrate
+                 '# set maximum video bitrate',
                  '-b:v', f'{options.video_bitrates[idx]}k',
                  '-maxrate:v', f'{options.video_bitrates[idx]}k',
                  '-bufsize:v', f'{options.video_bitrates[idx]*1.5}k')
-        if audio:
-            # Audio codec
-            hargs += ('-c:a', options.audio_codec)
-            # Audio sampling rate
-            if options.audio_sampling:
-                hargs += ('-ar', f'{options.audio_sampling}')
-            else:
-                hargs += ('-ar', f'{sampling}')
-            # Profile and bitrate
-            hargs += ('-profile:a', options.audio_profile,
-                      '-b:a', f'{options.audio_bitrate}k')
+        hargs += aargs
         # HLS options
-        args += ('-f', 'hls',
-                 *hargs,
-                 # Duration of an HLS segment
-                 '-hls_time', f'{options.hls_time}',
-                 # Put an I-frame at the beginning of each segment
-                 '-g', f'{keyf}', '-keyint_min', f'{keyf}',
-                 '-hls_playlist_type', 'vod',
-                 '-hls_list_size', '0',
-                 '-hls_segment_type', options.hls_type,
-                 '-hls_base_url', options.hls_segment_prefix,
-                 '-hls_segment_filename',
-                 ".".join([options.hls_segments.format(
-                     index=f'{idx}_%03d', **voptions),
-                           {'mpegts': 'ts',
-                            'fmp4': 'mp4'}[options.hls_type]]))
+        args += (
+            f'# start producing HLS segments for {resolution}p ({idx})',
+            '-f', 'hls',
+            *hargs,
+            '# duration of an HLS segment',
+            '-hls_time', f'{options.hls_time}',
+            '# set I-frame at the beginning of each segment',
+            '-g', f'{keyf}', '-keyint_min', f'{keyf}',
+            '# set HLS playlist type',
+            '-hls_playlist_type', 'vod',
+            '# do not limit playlist size',
+            '-hls_list_size', '0',
+            '# use fMP4 (iOS > 10)' if options.hls_type == 'fmp4' else
+            '# use MPEG2-TS (compatible with any iOS)',
+            '-hls_segment_type', options.hls_type,
+            '# append a base URL to each segment name',
+            '-hls_base_url', options.hls_segment_prefix,
+            '# set pattern for segment filenames',
+            '-hls_segment_filename',
+            ".".join([options.hls_segments.format(
+                index=f'{idx}_%03d', **voptions),
+                      {'mpegts': 'ts',
+                       'fmp4': 'mp4'}[options.hls_type]]))
         if options.hls_type == 'fmp4':
-            args += ('-hls_fmp4_init_filename',
-                     ".".join([options.hls_segments.format(
-                         index='{idx}_init', **voptions),
-                               'mp4']))
+            args += (
+                '# filename for initial fMP4 segment',
+                '-hls_fmp4_init_filename',
+                ".".join([options.hls_segments.format(
+                    index='{idx}_init', **voptions),
+                          'mp4']))
         # Output filename
         playlist_name = ".".join([options.hls_segments.format(
             index=f'{idx}', **voptions),
@@ -644,15 +696,22 @@ def transcode(options, technical):
                           'resolution': f'{twidth}x{theight}'}
 
         # Small MP4 to extract codec
-        args += ('-f', 'mp4',    # Output format is MP4
-                 # Use same encoding arguments as the normal video
-                 *hargs,
-                 # Keep only one frame
-                 '-frames:v', '1',
-                 f'_{idx}.mp4')
+        if options.hls_add_codecs:
+            args += (
+                '# also generate a small MP4 to extract codec later',
+                '-f', 'mp4',
+                '# use same encoding arguments as the normal video',
+                *hargs,
+                '# but keep only one frame',
+                '-frames:v', '1',
+                '# put the result into a temporary file',
+                f'_{idx}.mp4')
 
     logger.info('start transcoding')
-    run(options, 'ffmpeg', '-loglevel', 'error', *args)
+    run(options, 'ffmpeg',
+        '# only log errors',
+        '-loglevel', 'error',
+        *args)
 
     logger.info('write master playlist')
     no_codecs = False
