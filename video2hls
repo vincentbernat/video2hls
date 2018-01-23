@@ -506,7 +506,7 @@ def poster(options, technical):
             '-ss', f'{seek}',
             '# load input file',
             '-i', f'{options.input}',
-            '# Only keep video stream',
+            '# only keep first video stream',
             '-map', f'0:{technical["video"]["index"]}',
             '# take only one frame',
             '-frames:v', '1',
