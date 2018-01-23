@@ -178,6 +178,7 @@ def parse_args():
                    help="seek to the given position (5% or 15s)")
     g.add_argument("--poster-width", metavar="WIDTH",
                    type=int,
+                   default="1280",
                    help="poster width (in pixels)")
 
     g = parser.add_argument_group("program options")
@@ -461,7 +462,7 @@ def poster(options, technical):
 
     # Filter to apply
     vfilter = ['select=eq(pict_type\\,I)']
-    if options.poster_width is not None:
+    if options.poster_width:
         resolution = int(options.poster_width / options.ratio)
         twidth, theight = contained_in((int(technical['video']['width']),
                                         int(technical['video']['height'])),
