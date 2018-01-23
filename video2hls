@@ -544,8 +544,8 @@ def transcode(options, technical):
     # HLS
     playlists = {}
     for idx in range(len(options.video_widths)):
-        if (options.video_widths[idx] > width) and \
-           (options.video_widths[idx] * height / width > height):
+        if (options.video_widths[idx] > width*1.1) and \
+           (options.video_widths[idx] * height / width > height*1.1):
             logger.warning(f'skip {options.video_widths[idx]} width')
             continue
         logger.debug(f'setup HLS for {options.video_names[idx]}')
