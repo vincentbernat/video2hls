@@ -169,7 +169,7 @@ def parse_args():
                    default=10,
                    type=int,
                    help="poster quality (from 0 to 100)")
-    g.add_argument("--poster-name", metavar="FILE",
+    g.add_argument("--poster-filename", metavar="FILE",
                    default="poster.jpg",
                    type=str,
                    help="poster filename")
@@ -390,8 +390,8 @@ def extract_codecs(options, sample):
                             level = int(mo.group('value'))
                     if all(x is not None
                            for x in (profile, constraints, level)):
-                        codec = (f'avc1.{profile:02X}'
-                                 f'{constraints:02X}{level:02X}')
+                        codec = (f'avc1.{profile:02x}'
+                                 f'{constraints:02x}{level:02x}')
                         logger.debug(f'found codec {codec} in {sample}')
                         results.append(codec)
                     else:
@@ -420,7 +420,7 @@ def extract_codecs(options, sample):
                             osti = (int(mo.group('byte'), 16) & 0xf8) >> 3
                     if all(x is not None
                            for x in (oti, osti)):
-                        codec = f'mp4a.{oti:02X}.{osti}'
+                        codec = f'mp4a.{oti:02x}.{osti}'
                         logger.debug(f'found codec {codec} in {sample}')
                         results.append(codec)
                     else:
@@ -481,9 +481,9 @@ def poster(options, technical):
             '-an',                     # remove audio
             '-vf', ",".join(vfilter),  # apply filter
             '-qscale:v', f'{quality}',
-            options.poster_name)       # output file
+            options.poster_filename)   # output file
     run(options, 'ffmpeg', '-loglevel', 'error', *args)
-    logger.info(f'poster {options.poster_name} created')
+    logger.info(f'poster created')
 
 
 def transcode(options, technical):
@@ -646,10 +646,10 @@ def transcode(options, technical):
     run(options, 'ffmpeg', '-loglevel', 'error', *args)
 
     logger.info('write master playlist')
+    no_codecs = False
     with open(options.hls_master_playlist, "w", encoding='utf-8') as master:
         master.write('#EXTM3U\n')
         master.write('#EXT-X-VERSION:3\n')
-        no_codecs = False
         for idx in playlists:
             codecs = None
             if not no_codecs and options.hls_add_codecs:
@@ -669,6 +669,23 @@ def transcode(options, technical):
                 f'FRAME-RATE={fps:,.3f},'
                 f'NAME="{options.video_names[idx]}"\n'
                 f'{options.hls_playlist_prefix}{playlists[idx]["name"]}\n')
+
+    codecs = None
+    if not no_codecs and options.hls_add_codecs and options.mp4:
+        try:
+            codecs = extract_codecs(options, options.mp4_filename)
+        except FileNotFoundError:
+            pass
+    codecs = f'; codecs="{codecs}"' if codecs else ''
+    poster = f' poster="{options.poster_filename}"' if options.poster else ''
+    logger.info(f'''video can be served with:
+
+    <video{poster} controls>
+      <source src="index.m3u8" type="application/vnd.apple.mpegurl">''')
+    if options.mp4:
+        logger.info(f'      <source src="{options.mp4_filename}" '
+                    f"type='video/mp4{codecs}'>")
+    logger.info('    </video>')
 
 
 if __name__ == "__main__":
