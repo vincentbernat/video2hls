@@ -82,6 +82,9 @@ def parse_args():
     g.add_argument('--hls-master-playlist', metavar='NAME',
                    default='index.m3u8', type=str,
                    help='master playlist name')
+    g.add_argument('--hls-no-codecs', action="store_false",
+                   default=True, dest="hls_add_codecs",
+                   help="do not compute codecs for master playlist")
 
     g = parser.add_argument_group("video options")
     g.add_argument("--video-widths", metavar="WIDTH",
@@ -615,7 +618,7 @@ def transcode(options, technical):
         no_codecs = False
         for idx in playlists:
             codecs = None
-            if not no_codecs:
+            if not no_codecs and options.hls_add_codecs:
                 try:
                     codecs = extract_codecs(options, f'_{idx}.mp4')
                 except FileNotFoundError:
