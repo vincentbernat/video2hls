@@ -617,7 +617,9 @@ def transcode(options, technical):
         # HLS options
         args += ('-f', 'hls',
                  *hargs,
+                 # Duration of an HLS segment
                  '-hls_time', f'{options.hls_time}',
+                 # Put an I-frame at the beginning of each segment
                  '-g', f'{keyf}', '-keyint_min', f'{keyf}',
                  '-hls_playlist_type', 'vod',
                  '-hls_list_size', '0',
@@ -643,7 +645,9 @@ def transcode(options, technical):
 
         # Small MP4 to extract codec
         args += ('-f', 'mp4',    # Output format is MP4
+                 # Use same encoding arguments as the normal video
                  *hargs,
+                 # Keep only one frame
                  '-frames:v', '1',
                  f'_{idx}.mp4')
 
