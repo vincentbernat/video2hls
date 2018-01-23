@@ -17,11 +17,11 @@ efficient but is only compatible with iOS 10+.
 Most video options take several parameters (space-separated). It is
 better to ensure the same length is used for all options, otherwise
 the shorter list will be extended by repeating the last value. Only
-the heights can be provided and aspect ratio is always kept.
+the widths can be provided and aspect ratio is always kept.
 
 The ``--video-overlay`` enables to overlay a text with technical
 information about the video on each video. The value is a pattern like
-``{height}p``. The allowed variables in pattern are the ones specified
+``{resolution}p``. The allowed variables in pattern are the ones specified
 as a video option. Same applies for ``--mp4-overlay``.
 
 The audio options are global as audio need to be switched seamlessly
@@ -71,7 +71,7 @@ def parse_args():
                    type=int,
                    help="HLS segment duration (in seconds)")
     g.add_argument("--hls-segments", metavar="FILENAMES",
-                   default="{height}p_{index}",
+                   default="{resolution}p_{index}",
                    help="pattern to use for HLS segment files")
     g.add_argument("--hls-segment-prefix", metavar="PREFIX",
                    default="", type=str,
@@ -84,10 +84,10 @@ def parse_args():
                    help='master playlist name')
 
     g = parser.add_argument_group("video options")
-    g.add_argument("--video-heights", metavar="HEIGHT",
-                   default=[1080, 720, 480, 360, 240],
+    g.add_argument("--video-widths", metavar="WIDTH",
+                   default=[1920, 1280, 854, 640, 428],
                    nargs="+", type=int,
-                   help="video resolution (height in pixels)")
+                   help="video resolution (width in pixels)")
     g.add_argument("--video-bitrates", metavar="RATE",
                    default=[4500, 2500, 1250, 700, 400],
                    nargs="+", type=int,
@@ -130,10 +130,10 @@ def parse_args():
     g.add_argument("--no-mp4", action="store_false",
                    default=True, dest="mp4",
                    help="disable progressive MP4 version")
-    g.add_argument("--mp4-height", metavar="HEIGHT",
+    g.add_argument("--mp4-width", metavar="WIDTH",
                    type=int,
-                   default=720,
-                   help="progressive MP4 resolution (height in pixels)")
+                   default=1280,
+                   help="progressive MP4 resolution (width in pixels)")
     g.add_argument("--mp4-bitrate", metavar="RATE",
                    type=int,
                    default=2000,
@@ -169,9 +169,9 @@ def parse_args():
     g.add_argument("--poster-seek", metavar="POSITION",
                    default="5%",
                    help="seek to the given position (5% or 15s)")
-    g.add_argument("--poster-height", metavar="HEIGHT",
+    g.add_argument("--poster-width", metavar="WIDTH",
                    type=int,
-                   help="poster height (in pixels)")
+                   help="poster width (in pixels)")
 
     g = parser.add_argument_group("program options")
     g.add_argument("--ffmpeg", metavar="EXE",
@@ -184,6 +184,9 @@ def parse_args():
                    default="mp4file",
                    help="mp4file executable name")
 
+    parser.add_argument("--ratio", metavar="RATIO",
+                        default="16:9",
+                        help="video ratio (not enforced)")
     parser.add_argument("--output", metavar="DIR",
                         help="output directory")
     parser.add_argument("--output-overwrite", action="store_true",
@@ -208,11 +211,16 @@ def parse_args():
             # Copy last value
             value.extend([value[-1]] * diff)
 
+    # Handle ratio
+    options.ratio = operator.truediv(*(int(x)
+                                       for x in options.ratio.split(":", 1)))
+
     # Handle video names
     if len(options.video_names) < max_length:
         diff = max_length - len(options.video_names)
         options.video_names.extend(
-            ["{}p".format(x) for x in options.video_heights][-diff:])
+            ["{}p".format(int(x/options.ratio))
+             for x in options.video_widths][-diff:])
 
     # Handle output directory
     if options.output is None:
@@ -429,8 +437,8 @@ def poster(options, technical):
 
     # Filter to apply
     vfilter = ['select=eq(pict_type\\,I)']
-    if options.poster_height is not None:
-        vfilter.append(f'scale=-2:{options.poster_height}')
+    if options.poster_width is not None:
+        vfilter.append(f'scale={options.poster_width}:-2')
 
     # Quality
     quality = options.poster_quality * 30 // 100
@@ -477,12 +485,13 @@ def transcode(options, technical):
     # Progressive MP4
     if options.mp4:
         logger.debug('setup MP4 progressive output')
-        vfilters = [f'scale=-2:{options.mp4_height}',
+        vfilters = [f'scale={options.mp4_width}:-2',
                     'format=yuv420p']
         if options.mp4_overlay:
             with open('_mp4.txt', 'w', encoding='utf-8') as f:
                 f.write(options.mp4_overlay.format(
-                    height=options.mp4_height,
+                    width=options.mp4_width,
+                    resolution=int(options.mp4_width/options.ratio),
                     bitrate=options.mp4_bitrate,
                     codec=options.mp4_codec,
                     profile=options.mp4_profile))
@@ -521,18 +530,20 @@ def transcode(options, technical):
 
     # HLS
     playlists = {}
-    for idx in range(len(options.video_heights)):
-        if (options.video_heights[idx] > height) and \
-           (options.video_heights[idx] * width / height > width):
-            logger.debug(f'skip {options.video_heights[idx]}p resolution')
+    for idx in range(len(options.video_widths)):
+        if (options.video_widths[idx] > width) and \
+           (options.video_widths[idx] * height / width > height):
+            logger.warning(f'skip {options.video_widths[idx]} width')
             continue
         logger.debug(f'setup HLS for {options.video_names[idx]}')
-        voptions = dict(height=options.video_heights[idx],
+        voptions = dict(width=options.video_widths[idx],
+                        resolution=int(options.video_widths[idx] /
+                                       options.ratio),
                         bitrate=options.video_bitrates[idx],
                         codec=options.video_codecs[idx],
                         name=options.video_names[idx],
                         profile=options.video_profiles[idx])
-        vfilters = [f'scale=-2:{options.video_heights[idx]}']
+        vfilters = [f'scale={options.video_widths[idx]}:-2']
         if options.video_overlay:
             with open(f'_{idx}.txt', 'w') as f:
                 f.write(options.video_overlay.format(**voptions))
@@ -614,8 +625,8 @@ def transcode(options, technical):
             master.write(
                 '#EXT-X-STREAM-INF:'
                 f'BANDWIDTH={options.video_bitrates[idx]}000,'
-                f'RESOLUTION={options.video_heights[idx] * width // height}x'
-                f'{options.video_heights[idx]},')
+                f'RESOLUTION={options.video_widths[idx]}x'
+                f'{options.video_widths[idx] * height // width},')
             if codecs:
                 master.write(f'CODECS="{codecs}",')
             master.write(

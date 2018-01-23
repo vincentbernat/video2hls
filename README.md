@@ -24,7 +24,7 @@ Convert using default parameters (MPEG2-TS with many resolutions):
 
 Add an overlay to distinguish the different resolutions:
 
-    ./video2hls --mp4-overlay '{height}p, progressive' --video-overlay '{height}p, HLS' \
+    ./video2hls --mp4-overlay '{resolution}p, progressive' --video-overlay '{resolution}p, HLS' \
        TearsOfSteel.mp4
 
 Use fragmented MP4:
@@ -34,6 +34,6 @@ Use fragmented MP4:
 Specify more bitrates:
 
     ./video2hls --video-bitrates 8000 4000 2000 1000 \
-                --video-heights 1080 1080 720 480 \
+                --video-widths 1920 1920 1280 854 \
                 --video-names '1080p high' '1080p low'
        TearsOfSteel.mp4
