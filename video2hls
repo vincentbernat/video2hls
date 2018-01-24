@@ -608,7 +608,6 @@ def transcode(options, technical):
             '-maxrate:v', f'{options.mp4_bitrate}k',
             '-bufsize:v', f'{options.mp4_bitrate*1.5}k')
         args += aargs
-        # Move index at the beginning
         args += (
             '# move index at the beginning',
             '-movflags', '+faststart',
