@@ -728,9 +728,12 @@ def transcode(options, technical):
                     logger.warning('cannot extract codec due to '
                                    'mp4file missing')
                     no_codecs = True
+            bandwidth = options.video_bitrates[idx]
+            if audio:
+                bandwidth += options.audio_bitrate
             master.write(
                 '#EXT-X-STREAM-INF:'
-                f'BANDWIDTH={options.video_bitrates[idx]}000,'
+                f'BANDWIDTH={bandwidth}000,'
                 f'RESOLUTION={playlists[idx]["resolution"]},')
             if codecs:
                 master.write(f'CODECS="{codecs}",')
