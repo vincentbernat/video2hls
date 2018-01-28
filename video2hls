@@ -26,7 +26,8 @@ as a video option. Same applies for ``--mp4-overlay``.
 
 The audio options are global as audio need to be switched seamlessly
 between segments and it is not possible when using different bitrates
-or options.
+or options. The ``audio-only`` option is like adding a video bitrate
+of 0 at the end of the video bitrate list.
 
 The default output directory is the basename of the input video.
 
@@ -139,6 +140,9 @@ def parse_args():
     g.add_argument("--audio-profile", metavar="PROFILE",
                    default="aac_low",
                    help="audio profile")
+    g.add_argument("--audio-only", action="store_true",
+                   default="false",
+                   help="also generate an audio-only variant")
 
     g = parser.add_argument_group("progressive MP4 options")
     g.add_argument("--no-mp4", action="store_false",
@@ -212,6 +216,10 @@ def parse_args():
 
     options = parser.parse_args()
 
+    # If audio only is requested, append a bitrate of 0
+    if options.audio_only:
+        options.video_bitrates.append(0)
+
     # If needed, extend video options to the same length
     video_options = [option
                      for option in vars(options)
@@ -233,15 +241,24 @@ def parse_args():
     # Handle video names
     if len(options.video_names) < max_length:
         diff = max_length - len(options.video_names)
-        options.video_names.extend(
-            ["{}p".format(int(x/options.ratio))
-             for x in options.video_widths][-diff:])
+        more = []
+        for idx in range(len(options.video_widths)):
+            if options.video_bitrates[idx] > 0:
+                more.append(f"{int(options.video_widths[idx]/options.ratio)}p")
+            else:
+                more.append("Audio only")
+        options.video_names.extend(more[-diff:])
 
     # Add bitrate factor to bitrates
     options.video_bitrates = [int(r*options.video_bitrate_factor)
                               for r in options.video_bitrates]
     options.mp4_bitrate = int(options.mp4_bitrate *
                               options.video_bitrate_factor)
+
+    # Fix width when bitrate is 0
+    for idx in range(len(options.video_widths)):
+        if options.video_bitrates[idx] == 0:
+            options.video_widths[idx] = 0
 
     # Handle output directory
     if options.output is None:
@@ -641,19 +658,23 @@ def transcode(options, technical):
                             'fontcolor=white@0.5: '
                             'borderw=3: bordercolor=black@0.5')
             cfilter = 'apply filters: add overlay and scale'
-        hargs = ('# keep the first video track',
-                 '-map', f'0:{video["index"]}',
-                 f'# {cfilter}',
-                 '-vf', ','.join(vfilters),
-                 '# select video codec',
-                 '-c:v', options.video_codecs[idx],
-                 '# select video profile and level',
-                 '-profile:v', options.video_profiles[idx].split("@")[0],
-                 '-level:v', options.video_profiles[idx].split("@")[1],
-                 '# set maximum video bitrate',
-                 '-b:v', f'{options.video_bitrates[idx]}k',
-                 '-maxrate:v', f'{options.video_bitrates[idx]}k',
-                 '-bufsize:v', f'{options.video_bitrates[idx]*1.5}k')
+        hargs = ()
+        if options.video_bitrates[idx] > 0:
+            hargs += ('# keep the first video track',
+                      '-map', f'0:{video["index"]}',
+                      f'# {cfilter}',
+                      '-vf', ','.join(vfilters),
+                      '# select video codec',
+                      '-c:v', options.video_codecs[idx],
+                      '# select video profile and level',
+                      '-profile:v', options.video_profiles[idx].split("@")[0],
+                      '-level:v', options.video_profiles[idx].split("@")[1],
+                      '# set maximum video bitrate',
+                      '-b:v', f'{options.video_bitrates[idx]}k',
+                      '-maxrate:v', f'{options.video_bitrates[idx]}k',
+                      '-bufsize:v', f'{options.video_bitrates[idx]*1.5}k')
+        else:
+            hargs += ('# no video',)
         hargs += aargs
         # HLS options
         args += (
@@ -732,12 +753,15 @@ def transcode(options, technical):
                 bandwidth += options.audio_bitrate
             master.write(
                 '#EXT-X-STREAM-INF:'
-                f'BANDWIDTH={bandwidth}000,'
-                f'RESOLUTION={playlists[idx]["resolution"]},')
+                f'BANDWIDTH={bandwidth}000,')
+            if options.video_bitrates[idx] > 0:
+                master.write(
+                    f'RESOLUTION={playlists[idx]["resolution"]},'
+                    f'FRAME-RATE={fps:,.3f},')
             if codecs:
-                master.write(f'CODECS="{codecs}",')
+                master.write(
+                    f'CODECS="{codecs}",')
             master.write(
-                f'FRAME-RATE={fps:,.3f},'
                 f'NAME="{options.video_names[idx]}"\n'
                 f'{options.hls_playlist_prefix}{playlists[idx]["name"]}\n')
 
