@@ -140,8 +140,11 @@ def parse_args():
                    default="aac_low",
                    help="audio profile")
     g.add_argument("--audio-only", action="store_true",
-                   default="false",
+                   default=False,
                    help="also generate an audio-only variant")
+    g.add_argument("--audio-separate", action="store_true",
+                   default=False,
+                   help="keep audio track in separate media playlist")
 
     g = parser.add_argument_group("progressive MP4 options")
     g.add_argument("--no-mp4", action="store_false",
@@ -216,7 +219,7 @@ def parse_args():
     options = parser.parse_args()
 
     # If audio only is requested, append a width of 0
-    if options.audio_only:
+    if options.audio_only or options.audio_separate:
         options.video_widths.append(0)
 
     # If needed, extend/truncate video options to the same length
@@ -658,9 +661,9 @@ def transcode(options, technical):
                             'fontcolor=white@0.5: '
                             'borderw=3: bordercolor=black@0.5')
             cfilter = 'apply filters: add overlay and scale'
-        hargs = ()
+        vargs = ()
         if options.video_bitrates[idx] > 0:
-            hargs += ('# keep the first video track',
+            vargs += ('# keep the first video track',
                       '-map', f'0:{video["index"]}',
                       f'# {cfilter}',
                       '-vf', ','.join(vfilters),
@@ -674,13 +677,15 @@ def transcode(options, technical):
                       '-maxrate:v', f'{options.video_bitrates[idx]}k',
                       '-bufsize:v', f'{options.video_bitrates[idx]*1.5}k')
         else:
-            hargs += ('# no video',)
-        hargs += aargs
+            vargs += ('# no video',)
         # HLS options
         args += (
             f'# start producing HLS segments for {resolution}p ({idx})',
             '-f', 'hls',
-            *hargs,
+            *vargs,
+            *(aargs
+              if not options.audio_separate or options.video_bitrates[idx] == 0
+              else ()),
             '# duration of an HLS segment',
             '-hls_time', f'{options.hls_time}',
             '# this is fairly important:',
@@ -722,7 +727,8 @@ def transcode(options, technical):
                 '# also generate a small MP4 to extract codec later',
                 '-f', 'mp4',
                 '# use same encoding arguments as the normal video:',
-                *hargs,
+                *vargs,
+                *aargs,
                 '# but keep only one frame',
                 '-frames:v', '1',
                 '# put the result into a temporary file',
@@ -738,8 +744,19 @@ def transcode(options, technical):
     no_codecs = False
     with open(options.hls_master_playlist, "w", encoding='utf-8') as master:
         master.write('#EXTM3U\n')
-        master.write('#EXT-X-VERSION:3\n')
+        if options.audio_separate:
+            master.write('#EXT-X-VERSION:4\n')
+            master.write('#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",'
+                         'DEFAULT=yes,AUTOSELECT=yes,'
+                         f'URI="{options.hls_playlist_prefix}'
+                         f'{playlists[idx]["name"]}"\n')
+        else:
+            master.write('#EXT-X-VERSION:3\n')
         for idx in playlists:
+            if not options.audio_only and options.video_bitrates[idx] == 0:
+                # We didn't ask for an audio only track but we have
+                # one, skip it.
+                continue
             codecs = None
             if not no_codecs and options.hls_add_codecs:
                 try:
@@ -761,6 +778,8 @@ def transcode(options, technical):
             if codecs:
                 master.write(
                     f'CODECS="{codecs}",')
+            if options.audio_separate:
+                master.write('AUDIO="audio",')
             master.write(
                 f'NAME="{options.video_names[idx]}"\n'
                 f'{options.hls_playlist_prefix}{playlists[idx]["name"]}\n')
