@@ -14,10 +14,9 @@ can be changed, but this may not work in all browsers.
 One important option is ``--hls-type``. Choosing ``fmp4`` is more
 efficient but is only compatible with iOS 10+.
 
-Most video options take several parameters (space-separated). It is
-better to ensure the same length is used for all options, otherwise
-the shorter list will be extended by repeating the last value. Only
-the widths can be provided and aspect ratio is always kept.
+Most video options take several parameters (space-separated). When all
+options do not have the same length, the length of ``--video-widths`` is
+used to normalize all lengths. Last value is repeated if needed.
 
 The ``--video-overlay`` enables to overlay a text with technical
 information about the video on each video. The value is a pattern like
@@ -26,8 +25,8 @@ as a video option. Same applies for ``--mp4-overlay``.
 
 The audio options are global as audio need to be switched seamlessly
 between segments and it is not possible when using different bitrates
-or options. The ``audio-only`` option is like adding a video bitrate
-of 0 at the end of the video bitrate list.
+or options. The ``audio-only`` option is like adding a video width
+of 0 at the end of the video width list.
 
 The default output directory is the basename of the input video.
 
@@ -216,31 +215,37 @@ def parse_args():
 
     options = parser.parse_args()
 
-    # If audio only is requested, append a bitrate of 0
+    # If audio only is requested, append a width of 0
     if options.audio_only:
-        options.video_bitrates.append(0)
+        options.video_widths.append(0)
 
-    # If needed, extend video options to the same length
+    # If needed, extend/truncate video options to the same length
     video_options = [option
                      for option in vars(options)
                      if option.startswith("video_") and option.endswith("s")]
-    max_length = max(len(vars(options)[option]) for option in video_options)
+    length = len(options.video_widths)
     for option in video_options:
+        value = vars(options)[option]
+        del value[length:]
         if option == "video_names":
             continue
-        value = vars(options)[option]
-        diff = max_length - len(value)
+        diff = length - len(value)
         if diff > 0:
             # Copy last value
             value.extend([value[-1]] * diff)
+
+    # Fix bitrate when width is 0
+    for idx in range(len(options.video_widths)):
+        if options.video_widths[idx] == 0:
+            options.video_bitrates[idx] = 0
 
     # Handle ratio
     options.ratio = operator.truediv(*(int(x)
                                        for x in options.ratio.split(":", 1)))
 
     # Handle video names
-    if len(options.video_names) < max_length:
-        diff = max_length - len(options.video_names)
+    if len(options.video_names) < length:
+        diff = length - len(options.video_names)
         more = []
         for idx in range(len(options.video_widths)):
             if options.video_bitrates[idx] > 0:
@@ -254,11 +259,6 @@ def parse_args():
                               for r in options.video_bitrates]
     options.mp4_bitrate = int(options.mp4_bitrate *
                               options.video_bitrate_factor)
-
-    # Fix width when bitrate is 0
-    for idx in range(len(options.video_widths)):
-        if options.video_bitrates[idx] == 0:
-            options.video_widths[idx] = 0
 
     # Handle output directory
     if options.output is None:
