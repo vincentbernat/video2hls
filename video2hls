@@ -25,8 +25,9 @@ as a video option. Same applies for ``--mp4-overlay``.
 
 The audio options are global as audio need to be switched seamlessly
 between segments and it is not possible when using different bitrates
-or options. The ``audio-only`` option is like adding a video width
-of 0 at the end of the video width list.
+or options. The ``--audio-only`` option is like adding a video width
+of 0 at the end of the video width list. The ``--audio-separate`` will
+encode the audio track separately from the video (less bandwidth).
 
 The default output directory is the basename of the input video.
 
@@ -832,6 +833,12 @@ if __name__ == "__main__":
         technical = probe(options)
         if technical['video'] is None:
             raise RuntimeError(f'no video track in {options.input}')
+        if not technical['audio'] and options.audio_only:
+            raise RuntimeError(f'no audio track in {options.input}, '
+                               'cannot do an audio only variant')
+        if not technical['audio'] and options.audio_separate:
+            raise RuntimeError(f'no audio track in {options.input}, '
+                               'cannot do a separate audio track')
 
         poster(options, technical)
         transcode(options, technical)
