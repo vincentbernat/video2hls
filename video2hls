@@ -750,7 +750,7 @@ def transcode(options, technical):
             master.write('#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",'
                          'DEFAULT=yes,AUTOSELECT=yes,'
                          f'URI="{options.hls_playlist_prefix}'
-                         f'{playlists[idx]["name"]}"\n')
+                         f'{playlists[-1]["name"]}"\n')
         else:
             master.write('#EXT-X-VERSION:3\n')
         for idx in playlists:
