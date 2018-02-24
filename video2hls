@@ -153,11 +153,17 @@ def parse_args():
                    help="disable progressive MP4 version")
     g.add_argument("--mp4-width", metavar="WIDTH",
                    type=int,
+                   help="progressive MP4 width (in pixels)")
+    g.add_argument("--mp4-max-width", metavar="WIDTH",
+                   type=int,
                    default=1280,
-                   help="progressive MP4 resolution (width in pixels)")
+                   help="progressive MP4 maximum width (inpixels)")
+    g.add_argument("--mp4-bitrate-factor", metavar="RATE",
+                   type=float,
+                   default=0.8,
+                   help="progressive MP4 bitrate factor")
     g.add_argument("--mp4-bitrate", metavar="RATE",
                    type=int,
-                   default=2000,
                    help="progressive MP4 bitrate (in kbits/s)")
     g.add_argument("--mp4-codec", metavar="CODEC",
                    type=str,
@@ -192,8 +198,11 @@ def parse_args():
                    help="seek to the given position (5%% or 15s)")
     g.add_argument("--poster-width", metavar="WIDTH",
                    type=int,
-                   default="1280",
                    help="poster width (in pixels)")
+    g.add_argument("--poster-max-width", metavar="WIDTH",
+                   default=1280,
+                   type=int,
+                   help="poster maximum width (in pixels)")
 
     g = parser.add_argument_group("program options")
     g.add_argument("--ffmpeg", metavar="EXE",
@@ -218,55 +227,6 @@ def parse_args():
                         help="video to be converted")
 
     options = parser.parse_args()
-
-    # If no HLS playlist prefix, use an empty one
-    if len(options.hls_playlist_prefix) == 0:
-        options.hls_playlist_prefix = [""]
-
-    # If audio only is requested, append a width of 0
-    if options.audio_only or options.audio_separate:
-        options.video_widths.append(0)
-
-    # If needed, extend/truncate video options to the same length
-    video_options = [option
-                     for option in vars(options)
-                     if option.startswith("video_") and option.endswith("s")]
-    length = len(options.video_widths)
-    for option in video_options:
-        value = vars(options)[option]
-        del value[length:]
-        if option == "video_names":
-            continue
-        diff = length - len(value)
-        if diff > 0:
-            # Copy last value
-            value.extend([value[-1]] * diff)
-
-    # Fix bitrate when width is 0
-    for idx in range(len(options.video_widths)):
-        if options.video_widths[idx] == 0:
-            options.video_bitrates[idx] = 0
-
-    # Handle ratio
-    options.ratio = operator.truediv(*(int(x)
-                                       for x in options.ratio.split(":", 1)))
-
-    # Handle video names
-    if len(options.video_names) < length:
-        diff = length - len(options.video_names)
-        more = []
-        for idx in range(len(options.video_widths)):
-            if options.video_bitrates[idx] > 0:
-                more.append(f"{int(options.video_widths[idx]/options.ratio)}p")
-            else:
-                more.append("Audio only")
-        options.video_names.extend(more[-diff:])
-
-    # Add bitrate factor to bitrates
-    options.video_bitrates = [int(r*options.video_bitrate_factor)
-                              for r in options.video_bitrates]
-    options.mp4_bitrate = int(options.mp4_bitrate *
-                              options.video_bitrate_factor)
 
     # Handle output directory
     if options.output is None:
@@ -494,6 +454,80 @@ def contained_in(original, target):
     return (width//2*2, height//2*2)
 
 
+def fix_options(options, technical):
+    """Fix options to remove too great sizes."""
+    # If no HLS playlist prefix, use an empty one
+    if len(options.hls_playlist_prefix) == 0:
+        options.hls_playlist_prefix = [""]
+
+    # If audio only is requested, append a width of 0
+    if options.audio_only or options.audio_separate:
+        options.video_widths.append(0)
+
+    # If needed, extend/truncate video options to the same length
+    video_options = [option
+                     for option in vars(options)
+                     if option.startswith("video_") and option.endswith("s")]
+    length = len(options.video_widths)
+    for option in video_options:
+        value = vars(options)[option]
+        del value[length:]
+        if option == "video_names":
+            continue
+        diff = length - len(value)
+        if diff > 0:
+            # Copy last value
+            value.extend([value[-1]] * diff)
+
+    # Fix bitrate when width is 0
+    for idx in range(len(options.video_widths)):
+        if options.video_widths[idx] == 0:
+            options.video_bitrates[idx] = 0
+
+    # Handle ratio
+    options.ratio = operator.truediv(*(int(x)
+                                       for x in options.ratio.split(":", 1)))
+
+    # Handle video names
+    if len(options.video_names) < length:
+        diff = length - len(options.video_names)
+        more = []
+        for idx in range(len(options.video_widths)):
+            if options.video_bitrates[idx] > 0:
+                more.append(f"{int(options.video_widths[idx]/options.ratio)}p")
+            else:
+                more.append("Audio only")
+        options.video_names.extend(more[-diff:])
+
+    # Add bitrate factor to bitrates
+    options.video_bitrates = [int(r*options.video_bitrate_factor)
+                              for r in options.video_bitrates]
+    if options.mp4_bitrate:
+        options.mp4_bitrate = int(options.mp4_bitrate *
+                                  options.video_bitrate_factor)
+
+    # Adapt options depending on video size
+    width = technical['video']['width']
+    height = technical['video']['width']
+    for idx in reversed(range(len(options.video_widths))):
+        if (options.video_widths[idx] > width*1.1) and \
+           (options.video_widths[idx] * height / width > height*1.1):
+            logger.warning(f'skip {options.video_widths[idx]} width')
+            for option in video_options:
+                del getattr(options, option)[idx]
+    if not options.poster_width:
+        options.poster_width = max(*(w for w in options.video_widths
+                                     if w < options.poster_max_width))
+    if not options.mp4_width:
+        options.mp4_width = max(*(w for w in options.video_widths
+                                  if w < options.mp4_max_width))
+    if not options.mp4_bitrate:
+        options.mp4_bitrate = int(
+            options.video_bitrates[
+                options.video_widths.index(
+                    options.mp4_width)] * options.mp4_bitrate_factor)
+
+
 def poster(options, technical):
     """Create poster."""
     if not options.poster:
@@ -517,12 +551,12 @@ def poster(options, technical):
 
     # Filter to apply
     vfilter = ['select=eq(pict_type\\,I)']
-    if options.poster_width:
-        resolution = int(options.poster_width / options.ratio)
-        twidth, theight = contained_in((int(technical['video']['width']),
-                                        int(technical['video']['height'])),
-                                       (options.poster_width, resolution))
-        vfilter.append(f'scale={twidth}:{theight}')
+    resolution = int(options.poster_width / options.ratio)
+    twidth, theight = contained_in((int(technical['video']['width']),
+                                    int(technical['video']['height'])),
+                                   (options.poster_width, resolution))
+    vfilter.append(f'scale={twidth}:{theight}')
+    logger.info(f"poster is {twidth}x{theight}")
 
     # Quality
     quality = options.poster_quality * 30 // 100
@@ -546,7 +580,6 @@ def poster(options, technical):
         '# only log errors',
         '-loglevel', 'error',
         *args)
-    logger.info(f'poster created')
 
 
 def transcode(options, technical):
@@ -596,6 +629,8 @@ def transcode(options, technical):
         resolution = int(options.mp4_width/options.ratio)
         twidth, theight = contained_in((width, height),
                                        (options.mp4_width, resolution))
+        logger.info(f"progressive MP4 is {twidth}x{theight} at "
+                    f"{options.mp4_bitrate}kbps")
         vfilters = [f'scale={twidth}:{theight}',
                     'format=yuv420p']
         cfilter = 'apply filters: scale'
@@ -639,10 +674,6 @@ def transcode(options, technical):
     # HLS
     playlists = {}
     for idx in range(len(options.video_widths)):
-        if (options.video_widths[idx] > width*1.1) and \
-           (options.video_widths[idx] * height / width > height*1.1):
-            logger.warning(f'skip {options.video_widths[idx]} width')
-            continue
         logger.debug(f'setup HLS for {options.video_names[idx]}')
         resolution = int(options.video_widths[idx] /
                          options.ratio)
@@ -814,11 +845,6 @@ if __name__ == "__main__":
     setup_logging(options)
 
     try:
-        # Log current settings
-        logger.debug("current settings:")
-        for k, v in vars(options).items():
-            logger.debug(f" {k} = {v}")
-
         # Create output directory
         try:
             logger.debug(f"create directory {options.output}")
@@ -846,6 +872,13 @@ if __name__ == "__main__":
             raise RuntimeError(f'no audio track in {options.input}, '
                                'cannot do a separate audio track')
 
+        # Fix options to match input video
+        fix_options(options, technical)
+        logger.debug("current settings:")
+        for k, v in vars(options).items():
+            logger.debug(f" {k} = {v}")
+
+        # Generate output files
         poster(options, technical)
         transcode(options, technical)
 
