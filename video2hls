@@ -85,7 +85,7 @@ def parse_args():
                    default="", type=str,
                    help="prefix to use for segments in media playlists")
     g.add_argument("--hls-playlist-prefix", metavar="PREFIX",
-                   default="", type=str,
+                   default=[], type=str, nargs="+",
                    help="prefix to use for playlists in master playlist")
     g.add_argument('--hls-master-playlist', metavar='NAME',
                    default='index.m3u8', type=str,
@@ -218,6 +218,10 @@ def parse_args():
                         help="video to be converted")
 
     options = parser.parse_args()
+
+    # If no HLS playlist prefix, use an empty one
+    if len(options.hls_playlist_prefix) == 0:
+        options.hls_playlist_prefix = [""]
 
     # If audio only is requested, append a width of 0
     if options.audio_only or options.audio_separate:
@@ -747,10 +751,11 @@ def transcode(options, technical):
         master.write('#EXTM3U\n')
         if options.audio_separate:
             master.write('#EXT-X-VERSION:4\n')
-            master.write('#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",'
-                         'DEFAULT=yes,AUTOSELECT=yes,'
-                         f'URI="{options.hls_playlist_prefix}'
-                         f'{playlists[max(playlists.keys())]["name"]}"\n')
+            for prefix in options.hls_playlist_prefix:
+                master.write('#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",'
+                             'DEFAULT=yes,AUTOSELECT=yes,'
+                             f'URI="{prefix}'
+                             f'{playlists[max(playlists.keys())]["name"]}"\n')
         else:
             master.write('#EXT-X-VERSION:3\n')
         for idx in playlists:
@@ -769,21 +774,22 @@ def transcode(options, technical):
             bandwidth = options.video_bitrates[idx]
             if audio:
                 bandwidth += options.audio_bitrate
-            master.write(
-                '#EXT-X-STREAM-INF:'
-                f'BANDWIDTH={bandwidth}000,')
-            if options.video_bitrates[idx] > 0:
+            for prefix in options.hls_playlist_prefix:
                 master.write(
-                    f'RESOLUTION={playlists[idx]["resolution"]},'
-                    f'FRAME-RATE={fps:,.3f},')
-            if codecs:
+                    '#EXT-X-STREAM-INF:'
+                    f'BANDWIDTH={bandwidth}000,')
+                if options.video_bitrates[idx] > 0:
+                    master.write(
+                        f'RESOLUTION={playlists[idx]["resolution"]},'
+                        f'FRAME-RATE={fps:,.3f},')
+                if codecs:
+                    master.write(
+                        f'CODECS="{codecs}",')
+                if options.audio_separate:
+                    master.write('AUDIO="audio",')
                 master.write(
-                    f'CODECS="{codecs}",')
-            if options.audio_separate:
-                master.write('AUDIO="audio",')
-            master.write(
-                f'NAME="{options.video_names[idx]}"\n'
-                f'{options.hls_playlist_prefix}{playlists[idx]["name"]}\n')
+                    f'NAME="{options.video_names[idx]}"\n'
+                    f'{prefix}{playlists[idx]["name"]}\n')
 
     codecs = None
     if not no_codecs and options.hls_add_codecs and options.mp4:
