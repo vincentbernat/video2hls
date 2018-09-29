@@ -189,6 +189,9 @@ def parse_args():
                    default=10,
                    type=int,
                    help="poster quality (from 0 to 100)")
+    g.add_argument("--poster-grayscale", default=False,
+                   action="store_true",
+                   help="convert poster to grayscale")
     g.add_argument("--poster-filename", metavar="FILE",
                    default="poster.jpg",
                    type=str,
@@ -557,6 +560,8 @@ def poster(options, technical):
                                    (options.poster_width, resolution))
     vfilter.append(f'scale={twidth}:{theight}')
     logger.info(f"poster is {twidth}x{theight}")
+    if options.poster_grayscale:
+        vfilter.append(f'format=gray')
 
     # Quality
     quality = options.poster_quality * 30 // 100
