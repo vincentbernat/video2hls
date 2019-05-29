@@ -637,7 +637,7 @@ def transcode(options, technical):
         logger.info(f"progressive MP4 is {twidth}x{theight} at "
                     f"{options.mp4_bitrate}kbps")
         vfilters = [f'scale={twidth}:{theight}',
-                    'format=yuv420p']
+                    'format=yuvj420p']
         cfilter = 'apply filters: scale'
         if options.mp4_overlay:
             with open('_mp4.txt', 'w', encoding='utf-8') as f:
@@ -691,7 +691,7 @@ def transcode(options, technical):
         twidth, theight = contained_in((width, height),
                                        (options.video_widths[idx], resolution))
         vfilters = [f'scale={twidth}:{theight}',
-                    'format=yuv420p']
+                    'format=yuvj420p']
         cfilter = 'apply filters: scale'
         if options.video_overlay:
             with open(f'_{idx}.txt', 'w') as f:
