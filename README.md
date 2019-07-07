@@ -40,6 +40,6 @@ Specify more bitrates:
        TearsOfSteel.mp4
 
 When using `--debug`, you'll get a detailed explanation of the
-commandes executed (and you can copy/paste them):
+executed commands (and you can copy/paste them):
 
     ./video2hls --debug TearsOfSteel.mp4
