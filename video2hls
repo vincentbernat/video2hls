@@ -752,7 +752,7 @@ def transcode(options, technical):
                 '# filename for initial fMP4 segment',
                 '-hls_fmp4_init_filename',
                 ".".join([options.hls_segments.format(
-                    index='{idx}_init', **voptions),
+                    index=f'{idx}_init', **voptions),
                           'mp4']))
         # Output filename
         playlist_name = ".".join([options.hls_segments.format(
