@@ -584,6 +584,7 @@ def poster(options, technical):
     run(options, 'ffmpeg',
         '# only log errors',
         '-loglevel', 'error',
+        '-hide_banner',
         *args)
 
 
@@ -779,6 +780,7 @@ def transcode(options, technical):
     run(options, 'ffmpeg',
         '# only log errors',
         '-loglevel', 'error',
+        '-hide_banner',
         *args)
 
     logger.info('write master playlist')
