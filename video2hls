@@ -122,6 +122,10 @@ def parse_args():
                    type=float,
                    default=1.0,
                    help="factor to apply to provided bitrates")
+    g.add_argument("--video-presets", metavar="PRESET",
+                   default=[],
+                   nargs="+", type=str,
+                   help="video presets")
 
     g = parser.add_argument_group("audio options")
     g.add_argument("--no-audio", action="store_false",
@@ -180,6 +184,9 @@ def parse_args():
                    type=str,
                    default="progressive.mp4",
                    help="filename for progressive MP4")
+    g.add_argument("--mp4-preset", metavar="PRESET",
+                   type=str,
+                   help="progressive MP4 preset")
 
     g = parser.add_argument_group("poster option")
     g.add_argument("--no-poster", action="store_false",
@@ -477,6 +484,8 @@ def fix_options(options, technical):
         del value[length:]
         if option == "video_names":
             continue
+        if option == "video_presets" and not value:
+            continue
         diff = length - len(value)
         if diff > 0:
             # Copy last value
@@ -670,6 +679,9 @@ def transcode(options, technical):
             '-b:v', f'{options.mp4_bitrate}k',
             '-maxrate:v', f'{options.mp4_bitrate}k',
             '-bufsize:v', f'{options.mp4_bitrate*1.5}k')
+        if options.mp4_preset:
+            args += ('# set the video preset',
+                     '-preset', options.mp4_preset)
         args += aargs
         args += (
             '# move index at the beginning',
@@ -718,6 +730,9 @@ def transcode(options, technical):
                       '-b:v', f'{options.video_bitrates[idx]}k',
                       '-maxrate:v', f'{options.video_bitrates[idx]}k',
                       '-bufsize:v', f'{options.video_bitrates[idx]*1.5}k')
+            if options.video_presets:
+                vargs += ('# set the video preset',
+                          '-preset', f'{options.video_presets[idx]}')
         else:
             vargs += ('# no video',)
         # HLS options
