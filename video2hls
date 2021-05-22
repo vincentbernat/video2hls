@@ -356,19 +356,23 @@ def probe(options):
               "# JSON output",
               '-print_format', 'json',
               "# get stream information",
-              '-show_streams',
+              '-show_entries',
+              'format=duration:streams',
               "# input video",
               options.input)
     info = json.loads(out)
     streams = info['streams']
 
     # Only keep first audio and first video
-    return {
+    result = {
         'video': ([x for x in streams
                    if x['codec_type'] == 'video'] or [None])[0],
         'audio': ([x for x in streams
                    if x['codec_type'] == 'audio'] or [None])[0]
     }
+    if 'duration' not in result['video']:
+        result['video']['duration'] = info['format']['duration']
+    return result
 
 
 def extract_codecs(options, sample):
