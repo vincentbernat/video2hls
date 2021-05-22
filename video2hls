@@ -530,7 +530,11 @@ def fix_options(options, technical):
            (options.video_widths[idx] * height / width > height*1.1):
             logger.warning(f'skip {options.video_widths[idx]} width')
             for option in video_options:
-                del getattr(options, option)[idx]
+                try:
+                    del getattr(options, option)[idx]
+                except IndexError:
+                    # May happen for video_presets
+                    pass
     if not options.poster_width:
         options.poster_width = max(*(w for w in options.video_widths
                                      if w <= options.poster_max_width))
