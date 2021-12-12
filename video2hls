@@ -161,7 +161,7 @@ def parse_args():
     g.add_argument("--mp4-max-width", metavar="WIDTH",
                    type=int,
                    default=1280,
-                   help="progressive MP4 maximum width (inpixels)")
+                   help="progressive MP4 maximum width (in pixels)")
     g.add_argument("--mp4-bitrate-factor", metavar="RATE",
                    type=float,
                    default=0.8,
@@ -334,10 +334,10 @@ def run(options, what, *args):
         logger.error("{} error:\n{}\n{}\n{}".format(
             what,
             f" A: {jargs}",
-            "\n".join([" O: {}".format(l)
-                       for l in stdout.rstrip().split("\n")]),
-            "\n".join([" E: {}".format(l)
-                       for l in stderr.rstrip().split("\n")])))
+            "\n".join([" O: {}".format(line)
+                       for line in stdout.rstrip().split("\n")]),
+            "\n".join([" E: {}".format(line)
+                       for line in stderr.rstrip().split("\n")])))
         raise RuntimeError(f"Unable to execute {what}")
     return stdout
 
@@ -392,7 +392,7 @@ def extract_codecs(options, sample):
     attribute_re = re.compile(r'.*: (?P<attribute>\S+) = (?P<value>\d+) .*')
     info_re = re.compile(r'.*: info = <\d+ bytes>\s+(?P<byte>\d{2}) .*')
     codecs = {mo.group('codec')
-              for mo in [codec_re.match(l) for l in result]
+              for mo in [codec_re.match(line) for line in result]
               if mo}
     results = []
     for codec in codecs:
@@ -578,7 +578,7 @@ def poster(options, technical):
     vfilter.append(f'scale={twidth}:{theight}')
     logger.info(f"poster is {twidth}x{theight}")
     if options.poster_grayscale:
-        vfilter.append(f'format=gray')
+        vfilter.append('format=gray')
 
     # Quality
     quality = options.poster_quality * 30 // 100
