@@ -519,11 +519,11 @@ def fix_options(options, technical):
             for option in video_options:
                 del getattr(options, option)[idx]
     if not options.poster_width:
-        options.poster_width = max(*(w for w in options.video_widths
-                                     if w <= options.poster_max_width))
+        options.poster_width = max(w for w in options.video_widths
+                                     if w <= options.poster_max_width)
     if not options.mp4_width:
-        options.mp4_width = max(*(w for w in options.video_widths
-                                  if w <= options.mp4_max_width))
+        options.mp4_width = max(w for w in options.video_widths
+                                  if w <= options.mp4_max_width)
     if not options.mp4_bitrate:
         options.mp4_bitrate = int(
             options.video_bitrates[
