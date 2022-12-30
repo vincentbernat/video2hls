@@ -108,7 +108,7 @@ def parse_args():
                    nargs="+", type=str,
                    help="video codecs")
     g.add_argument("--video-profiles", metavar="PROFILE",
-                   default=["high@5.1", "high@5.1", "main@3.2", "main@3.1"],
+                   default=["high@5.2", "high@5.2", "high@5.1", "high@4.2", "high@4.0", "main@3.1"],
                    nargs="+", type=str,
                    help="video profile (name@level)")
     g.add_argument("--video-names", metavar="NAME",
