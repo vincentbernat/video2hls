@@ -866,7 +866,7 @@ def transcode(options, technical):
       <source src="index.m3u8" type="application/vnd.apple.mpegurl">''')
     if options.mp4:
         logger.info(f'      <source src="{options.mp4_filename}" '
-                    f"type='video/mp4{codecs}'>")
+                    f'type="video/mp4{codecs}">')
     logger.info('    </video>')
 
 
