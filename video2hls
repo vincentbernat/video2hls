@@ -381,7 +381,7 @@ class ColorizingStreamHandler(logging.StreamHandler):
         [
             (x, i)
             for i, x in enumerate(
-                "black red green yellow blue " "magenta cyan white".split(" ")
+                "black red green yellow blue magenta cyan white".split(" ")
             )
         ]
     )
