@@ -28,7 +28,7 @@ Add an overlay to distinguish the different resolutions:
     ./video2hls --mp4-overlay '{resolution}p, progressive' --video-overlay '{resolution}p, HLS' \
        TearsOfSteel.mp4
 
-Use fragmented MP4:
+Use fragmented MP4 (supported only from iOS 10, see the [list of supported devices][]):
 
     ./video2hls --hls-type fmp4 TearsOfSteel.mp4
 
@@ -43,3 +43,5 @@ When using `--debug`, you'll get a detailed explanation of the
 executed commands (and you can copy/paste them):
 
     ./video2hls --debug TearsOfSteel.mp4
+
+[list of supported devices]: https://en.wikipedia.org/wiki/IOS_10#Supported_devices
