@@ -511,16 +511,23 @@ def probe(options):
         options.input,
     )
     info = json.loads(out)
-    streams = info["streams"]
+    streams = info.get("streams")
 
     # Only keep first audio and first video
-    result = {
-        "video": ([x for x in streams if x["codec_type"] == "video"] or [None])[0],
-        "audio": ([x for x in streams if x["codec_type"] == "audio"] or [None])[0],
+    video_stream = next((x for x in streams if x["codec_type"] == "video"), None)
+    audio_stream = next((x for x in streams if x["codec_type"] == "audio"), None)
+    
+    if video_stream:
+        _par = video_stream.get("sample_aspect_ratio", "N/A")
+        _n, _d = map(int, _par.split(":"))
+        par = _n / _d
+        video_stream["pixel_aspect_ratio"] = par
+        if "duration" not in video_stream and "format" in info:
+            video_stream["duration"] = info["format"].get("duration")
+    return {
+        "video": video_stream,
+        "audio": audio_stream
     }
-    if "duration" not in result["video"]:
-        result["video"]["duration"] = info["format"]["duration"]
-    return result
 
 
 def extract_codecs(options, sample):
@@ -670,9 +677,10 @@ def fix_options(options, technical):
 
     # Adapt options depending on video size
     width = technical["video"]["width"]
-    height = technical["video"]["width"]
+    height = technical["video"]["height"]
+    par = technical["video"]["pixel_aspect_ratio"]
     for idx in reversed(range(len(options.video_widths))):
-        if (options.video_widths[idx] > width * 1.1) and (
+        if (options.video_widths[idx] > par * width * 1.1) and (
             options.video_widths[idx] * height / width > height * 1.1
         ):
             logger.warning(f"skip {options.video_widths[idx]} width")
