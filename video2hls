@@ -518,7 +518,7 @@ def probe(options):
     audio_stream = next((x for x in streams if x["codec_type"] == "audio"), None)
     
     if video_stream:
-        _par = video_stream.get("sample_aspect_ratio", "N/A")
+        _par = video_stream.get("sample_aspect_ratio", "1:1")
         _n, _d = map(int, _par.split(":"))
         par = _n / _d
         video_stream["pixel_aspect_ratio"] = par
