@@ -5,7 +5,8 @@
 The video will be converted to different resolutions, using different
 bitrates. A master playlist will be generated to be processed by an
 HLS client. A progressive MP4 version is also produced (to be used as
-a fallback), as well as a poster image.
+a fallback), as well as a poster image. When the input video has
+chapters, they are written to a WebVTT chapter file.
 
 There are many options, but not all of them are safe to change. For
 example, HLS is usually expecting AAC-LC as a codec for audio. This
@@ -35,6 +36,7 @@ The default output directory is the basename of the input video.
 
 import argparse
 import glob
+import html
 import json
 import logging
 import logging.handlers
@@ -339,6 +341,22 @@ def parse_args():
         help="poster maximum width (in pixels)",
     )
 
+    g = parser.add_argument_group("chapters option")
+    g.add_argument(
+        "--no-chapters",
+        action="store_false",
+        default=True,
+        dest="chapters",
+        help="disable WebVTT chapter file",
+    )
+    g.add_argument(
+        "--chapters-filename",
+        metavar="FILE",
+        default="chapters.vtt",
+        type=str,
+        help="WebVTT chapter filename",
+    )
+
     g = parser.add_argument_group("program options")
     g.add_argument(
         "--ffmpeg", metavar="EXE", default="ffmpeg", help="ffmpeg executable name"
@@ -504,9 +522,9 @@ def probe(options):
         "# JSON output",
         "-print_format",
         "json",
-        "# get stream information",
+        "# get stream and chapter information",
         "-show_entries",
-        "format=duration:streams",
+        "format=duration:streams:chapters",
         "# input video",
         options.input,
     )
@@ -526,7 +544,8 @@ def probe(options):
             video_stream["duration"] = info["format"].get("duration")
     return {
         "video": video_stream,
-        "audio": audio_stream
+        "audio": audio_stream,
+        "chapters": info.get("chapters", []),
     }
 
 
@@ -773,6 +792,68 @@ def poster(options, technical):
     )
 
 
+def webvtt_timestamp(seconds):
+    """Turn a number of seconds into a WebVTT timestamp."""
+    milliseconds = round(seconds * 1000)
+    milliseconds, ms = divmod(milliseconds, 1000)
+    minutes, s = divmod(milliseconds, 60)
+    h, m = divmod(minutes, 60)
+    return f"{h:02}:{m:02}:{s:02}.{ms:03}"
+
+
+def webvtt_text(text):
+    """Escape a chapter title for use in a WebVTT cue.
+
+    A cue payload treats ``<`` as the start of a tag and ``&`` as the
+    start of an escape. A blank line ends the cue and ``-->`` would be
+    read as a new timing line, so newlines are folded into spaces.
+
+    """
+    return html.escape(" ".join(text.split()), quote=False)
+
+
+def chapters(options, technical):
+    """Create WebVTT chapter file."""
+    if not options.chapters:
+        logger.debug("skip chapter file creation")
+        return
+    if not technical["chapters"]:
+        logger.debug("no chapter in input video")
+        return
+
+    cues = []
+    seen = set()
+    for chapter in technical["chapters"]:
+        start = float(chapter["start_time"])
+        end = float(chapter["end_time"])
+        if end <= start:
+            logger.warning(f"skip empty chapter at {start}s")
+            continue
+        # An MP4 may store its chapters twice, both as a text track
+        # and in a "chpl" box, so the same range shows up twice.
+        if (start, end) in seen:
+            logger.debug(f"skip duplicate chapter at {start}s")
+            continue
+        seen.add((start, end))
+        title = chapter.get("tags", {}).get("title", "")
+        title = webvtt_text(title) or f"Chapter {len(cues) + 1}"
+        cues.append((start, end, title))
+
+    if not cues:
+        logger.debug("no usable chapter in input video")
+        return
+
+    logger.info(f"write {len(cues)} chapters to {options.chapters_filename}")
+    with open(options.chapters_filename, "w", encoding="utf-8") as f:
+        f.write("WEBVTT\n")
+        for idx, (start, end, title) in enumerate(cues):
+            f.write(
+                f"\n{idx + 1}\n"
+                f"{webvtt_timestamp(start)} --> {webvtt_timestamp(end)}\n"
+                f"{title}\n"
+            )
+
+
 def transcode(options, technical):
     """Create transcoded files."""
     logger.debug("create transcoded files")
@@ -878,9 +959,6 @@ def transcode(options, technical):
             args += ("# set the video preset", "-preset", options.mp4_preset)
         args += aargs
         args += (
-            # For HLS output, chapters are lost. If we want to keep them, we
-            # should output them as WebVTT. Since this is not done, we drop them
-            # from the MP4 output for consistency.
             "# don't copy chapters from the input",
             "-map_chapters",
             "-1",
@@ -1112,6 +1190,11 @@ def transcode(options, technical):
         logger.info(
             f'      <source src="{options.mp4_filename}" ' f'type="video/mp4{codecs}">'
         )
+    if options.chapters and technical["chapters"]:
+        logger.info(
+            f'      <track kind="chapters" '
+            f'src="{options.chapters_filename}" default>'
+        )
     logger.info("    </video>")
 
 
@@ -1158,6 +1241,7 @@ if __name__ == "__main__":
 
         # Generate output files
         poster(options, technical)
+        chapters(options, technical)
         transcode(options, technical)
 
         for f in glob.glob("_*"):
