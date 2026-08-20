@@ -878,6 +878,12 @@ def transcode(options, technical):
             args += ("# set the video preset", "-preset", options.mp4_preset)
         args += aargs
         args += (
+            # For HLS output, chapters are lost. If we want to keep them, we
+            # should output them as WebVTT. Since this is not done, we drop them
+            # from the MP4 output for consistency.
+            "# don't copy chapters from the input",
+            "-map_chapters",
+            "-1",
             "# move index at the beginning",
             "-movflags",
             "+faststart",
