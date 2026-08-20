@@ -709,13 +709,17 @@ def fix_options(options, technical):
                 except IndexError:
                     # May happen for video_presets
                     pass
+    # When every width is above the maximum, fall back to the smallest
+    # one as it is the closest to what was asked.
     if not options.poster_width:
         options.poster_width = max(
-            *(w for w in options.video_widths if w <= options.poster_max_width)
+            (w for w in options.video_widths if w <= options.poster_max_width),
+            default=min(options.video_widths),
         )
     if not options.mp4_width:
         options.mp4_width = max(
-            *(w for w in options.video_widths if w <= options.mp4_max_width)
+            (w for w in options.video_widths if w <= options.mp4_max_width),
+            default=min(options.video_widths),
         )
     if not options.mp4_bitrate:
         options.mp4_bitrate = int(
