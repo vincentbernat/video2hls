@@ -198,11 +198,10 @@ def parse_args():
 
     g = parser.add_argument_group("audio options")
     g.add_argument(
-        "--no-audio",
-        action="store_false",
+        "--audio",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        dest="audio",
-        help="remove audio track",
+        help="keep audio track",
     )
     g.add_argument(
         "--audio-sampling", metavar="RATE", type=int, help="audio sampling rate"
@@ -220,24 +219,23 @@ def parse_args():
     )
     g.add_argument(
         "--audio-only",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=False,
         help="also generate an audio-only variant",
     )
     g.add_argument(
         "--audio-separate",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=False,
         help="keep audio track in separate media playlist",
     )
 
     g = parser.add_argument_group("progressive MP4 options")
     g.add_argument(
-        "--no-mp4",
-        action="store_false",
+        "--mp4",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        dest="mp4",
-        help="disable progressive MP4 version",
+        help="generate progressive MP4 version",
     )
     g.add_argument(
         "--mp4-width",
@@ -298,11 +296,10 @@ def parse_args():
 
     g = parser.add_argument_group("poster option")
     g.add_argument(
-        "--no-poster",
-        action="store_false",
+        "--poster",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        dest="poster",
-        help="disable poster image",
+        help="generate poster image",
     )
     g.add_argument(
         "--poster-quality",
@@ -314,7 +311,7 @@ def parse_args():
     g.add_argument(
         "--poster-grayscale",
         default=False,
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         help="convert poster to grayscale",
     )
     g.add_argument(
@@ -343,11 +340,10 @@ def parse_args():
 
     g = parser.add_argument_group("chapters option")
     g.add_argument(
-        "--no-chapters",
-        action="store_false",
+        "--chapters",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        dest="chapters",
-        help="disable WebVTT chapter file",
+        help="generate WebVTT chapter file",
     )
     g.add_argument(
         "--chapters-filename",
@@ -374,7 +370,7 @@ def parse_args():
     parser.add_argument("--output", metavar="DIR", help="output directory")
     parser.add_argument(
         "--output-overwrite",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=False,
         help="overwrite output directory if it exists",
     )
