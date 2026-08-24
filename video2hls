@@ -1148,6 +1148,7 @@ def transcode(options, technical):
                 master.write(
                     '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Audio",'
                     "DEFAULT=YES,AUTOSELECT=YES,"
+                    f'CHANNELS="{channels}",'
                     f'URI="{prefix}'
                     f'{playlists[max(playlists.keys())]["name"]}"\n'
                 )
