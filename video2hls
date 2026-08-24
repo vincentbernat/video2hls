@@ -1135,6 +1135,14 @@ def transcode(options, technical):
     with open(options.hls_master_playlist, "w", encoding="utf-8") as master:
         master.write("#EXTM3U\n")
         if options.audio_separate:
+            # RFC 8216 says:
+            #
+            #    The EXT-X-MEDIA tag and the AUDIO, VIDEO, and SUBTITLES
+            #    attributes of the EXT-X-STREAM-INF tag are backward compatible
+            #    to protocol version 1, but playback on older clients may not be
+            #    desirable. A server MAY consider indicating an EXT-X-VERSION of
+            #    4 or higher in the Master Playlist but is not required to do
+            #    so.
             master.write("#EXT-X-VERSION:4\n")
             for prefix in options.hls_playlist_prefix:
                 master.write(
