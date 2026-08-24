@@ -1139,7 +1139,7 @@ def transcode(options, technical):
             for prefix in options.hls_playlist_prefix:
                 master.write(
                     '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",'
-                    "DEFAULT=yes,AUTOSELECT=yes,"
+                    "DEFAULT=YES,AUTOSELECT=YES,"
                     f'URI="{prefix}'
                     f'{playlists[max(playlists.keys())]["name"]}"\n'
                 )
