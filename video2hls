@@ -1165,7 +1165,7 @@ def transcode(options, technical):
                 if options.video_bitrates[idx] > 0:
                     master.write(
                         f'RESOLUTION={playlists[idx]["resolution"]},'
-                        f"FRAME-RATE={fps:,.3f},"
+                        f"FRAME-RATE={fps:.3f},"
                     )
                 if codecs:
                     master.write(f'CODECS="{codecs}",')
