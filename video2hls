@@ -396,14 +396,9 @@ def parse_args():
 class ColorizingStreamHandler(logging.StreamHandler):
     """Provide a nicer logging output to error output with colors."""
 
-    color_map = dict(
-        [
-            (x, i)
-            for i, x in enumerate(
-                "black red green yellow blue magenta cyan white".split(" ")
-            )
-        ]
-    )
+    color_map = {x: i for i, x in enumerate(
+        ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+    )}
     level_map = {
         logging.DEBUG: (None, "blue", " DBG"),
         logging.INFO: (None, "green", "INFO"),
