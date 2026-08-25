@@ -1131,6 +1131,11 @@ def transcode(options, technical):
 
     logger.info("write master playlist")
     no_codecs = False
+
+    def audio_group(gidx):
+        """Return the audio rendition group for one playlist prefix."""
+        return f"audio{gidx}" if gidx else "audio"
+
     with open(options.hls_master_playlist, "w", encoding="utf-8") as master:
         master.write("#EXTM3U\n")
         master.write("#EXT-X-INDEPENDENT-SEGMENTS\n")
@@ -1144,9 +1149,10 @@ def transcode(options, technical):
             #    4 or higher in the Master Playlist but is not required to do
             #    so.
             master.write("#EXT-X-VERSION:4\n")
-            for prefix in options.hls_playlist_prefix:
+            for gidx, prefix in enumerate(options.hls_playlist_prefix):
+                g = audio_group(gidx)
                 master.write(
-                    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Audio",'
+                    f'#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="{g}",NAME="Audio",'
                     "DEFAULT=YES,AUTOSELECT=YES,"
                     f'CHANNELS="{channels}",'
                     f'URI="{prefix}'
@@ -1169,7 +1175,7 @@ def transcode(options, technical):
             bandwidth = options.video_bitrates[idx]
             if audio:
                 bandwidth += options.audio_bitrate
-            for prefix in options.hls_playlist_prefix:
+            for gidx, prefix in enumerate(options.hls_playlist_prefix):
                 master.write("#EXT-X-STREAM-INF:" f"BANDWIDTH={bandwidth}000,")
                 if options.video_bitrates[idx] > 0:
                     master.write(
@@ -1179,7 +1185,7 @@ def transcode(options, technical):
                 if codecs:
                     master.write(f'CODECS="{codecs}",')
                 if options.audio_separate:
-                    master.write('AUDIO="audio",')
+                    master.write(f'AUDIO="{audio_group(gidx)}",')
                 master.write(
                     f'NAME="{options.video_names[idx]}"\n'
                     f'{prefix}{playlists[idx]["name"]}\n'
