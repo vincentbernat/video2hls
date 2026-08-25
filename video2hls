@@ -30,6 +30,12 @@ or options. The ``--audio-only`` option is like adding a video width
 of 0 at the end of the video width list. The ``--audio-separate`` will
 encode the audio track separately from the video (less bandwidth).
 
+All the audio tracks of the input are kept. Without
+``--audio-separate``, they are muxed into every variant. With it, each
+track gets its own playlist. Use ``--audio-names`` and
+``--audio-languages`` to describe them. The progressive MP4 only keeps
+the default track, unless ``--mp4-all-audio`` is used.
+
 The default output directory is the basename of the input video.
 
 """
@@ -62,7 +68,7 @@ class Technical(TypedDict):
     """Technical information extracted from the input video."""
 
     video: Stream
-    audio: Stream | None
+    audios: list[Stream]
     chapters: list[Chapter]
 
 
@@ -101,8 +107,11 @@ class Options(argparse.Namespace):
     audio_bitrate: int
     audio_codec: str
     audio_profile: str
+    audio_names: list[str]
+    audio_languages: list[str]
     audio_only: bool
     audio_separate: bool
+    audio_default: int
 
     mp4: bool
     mp4_width: int
@@ -114,6 +123,7 @@ class Options(argparse.Namespace):
     mp4_overlay: str | None
     mp4_filename: str
     mp4_preset: str | None
+    mp4_all_audio: bool
 
     poster: bool
     poster_quality: int
@@ -308,6 +318,22 @@ def parse_args() -> Options:
         "--audio-profile", metavar="PROFILE", default="aac_low", help="audio profile"
     )
     g.add_argument(
+        "--audio-names",
+        metavar="NAME",
+        default=[],
+        nargs="+",
+        type=str,
+        help="audio track names (used in playlists)",
+    )
+    g.add_argument(
+        "--audio-languages",
+        metavar="LANG",
+        default=[],
+        nargs="+",
+        type=str,
+        help="audio track languages (RFC 5646 tags)",
+    )
+    g.add_argument(
         "--audio-only",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -382,6 +408,12 @@ def parse_args() -> Options:
     )
     g.add_argument(
         "--mp4-preset", metavar="PRESET", type=str, help="progressive MP4 preset"
+    )
+    g.add_argument(
+        "--mp4-all-audio",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="keep all audio tracks in progressive MP4",
     )
 
     g = parser.add_argument_group("poster option")
@@ -590,8 +622,8 @@ def run(options: Options, what: str, *args: str) -> str:
 def probe(options: Options) -> Technical:
     """Probe input file to extract technical information.
 
-    We only keep the first video stream and the first audio
-    stream. This may not be the "best" streams ffmpeg would select.
+    We only keep the first video stream. This may not be the "best"
+    stream ffmpeg would select. All the audio streams are kept.
 
     """
     logger.info(f"probe {options.input}")
@@ -613,15 +645,13 @@ def probe(options: Options) -> Technical:
     info = json.loads(out)
     streams = info.get("streams")
 
-    # Only keep first audio and first video
+    # Only keep first video, but every audio track
     video_stream: Stream | None = next(
         (x for x in streams if x["codec_type"] == "video"), None
     )
-    audio_stream: Stream | None = next(
-        (x for x in streams if x["codec_type"] == "audio"), None
-    )
+    audio_streams: list[Stream] = [x for x in streams if x["codec_type"] == "audio"]
     if not options.audio:
-        audio_stream = None
+        audio_streams = []
     if video_stream is None:
         raise RuntimeError(f"no video track in {options.input}")
 
@@ -633,7 +663,7 @@ def probe(options: Options) -> Technical:
         video_stream["duration"] = info["format"].get("duration")
     return {
         "video": video_stream,
-        "audio": audio_stream,
+        "audios": audio_streams,
         "chapters": info.get("chapters", []),
     }
 
@@ -734,8 +764,38 @@ def fix_options(options: Options, technical: Technical) -> None:
     if len(options.hls_playlist_prefix) == 0:
         options.hls_playlist_prefix = [""]
 
-    # If audio only is requested, append a width of 0
-    if options.audio_only or options.audio_separate:
+    # Describe each audio track and pick the default one
+    audios = technical["audios"]
+    options.audio_default = next(
+        (
+            idx
+            for idx, audio in enumerate(audios)
+            if audio.get("disposition", {}).get("default")
+        ),
+        0,
+    )
+    del options.audio_names[len(audios) :]
+    del options.audio_languages[len(audios) :]
+    for idx, audio in enumerate(audios):
+        tags = {k.lower(): v for k, v in audio.get("tags", {}).items()}
+        if idx >= len(options.audio_languages):
+            options.audio_languages.append(tags.get("language", "und"))
+        if idx >= len(options.audio_names):
+            language = options.audio_languages[idx]
+            options.audio_names.append(
+                tags.get("title") or (language if language != "und" else "Audio")
+            )
+    if len(set(options.audio_names)) != len(options.audio_names):
+        # Renditions of a group need distinct names
+        options.audio_names = [
+            f"{name} ({idx + 1})" for idx, name in enumerate(options.audio_names)
+        ]
+
+    # An audio only variant needs a width of 0. With separate audio,
+    # each track gets its own width of 0 instead.
+    if options.audio_separate:
+        options.video_widths.extend([0] * len(audios))
+    elif options.audio_only:
         options.video_widths.append(0)
 
     # If needed, extend/truncate video options to the same length
@@ -945,7 +1005,7 @@ def transcode(options: Options, technical: Technical) -> None:
     """Create transcoded files."""
     logger.debug("create transcoded files")
     video = technical["video"]
-    audio = technical["audio"]
+    audios = technical["audios"]
 
     # Grab interesting facts about video
     height = int(video["height"])
@@ -953,32 +1013,37 @@ def transcode(options: Options, technical: Technical) -> None:
     num, den = (int(x) for x in video["r_frame_rate"].split("/"))
     fps = num / den
     logger.info(f"input video is {width}x{height} at {fps:,.2f}fps")
-    if audio:
-        channels = audio["channels"]
-        sampling = audio["sample_rate"]
-        logger.info(f"input audio is {channels} channels at {sampling}Hz")
+    for idx, audio in enumerate(audios):
+        logger.info(
+            f'input audio "{options.audio_names[idx]}" is '
+            f'{audio["channels"]} channels at {audio["sample_rate"]}Hz'
+        )
 
     # Input video
     args: tuple[str, ...] = ("# input video", "-i", options.input)
-    aargs: tuple[str, ...] = ()
-    if audio:
-        aargs += (
-            "# keep the first audio track",
-            "-map",
-            f'0:{audio["index"]}',
+
+    def audio_args(selected: list[int]) -> tuple[str, ...]:
+        """Build the arguments to encode the given audio tracks.
+
+        selected holds indexes into the audio track list.
+
+        """
+        if not selected:
+            return ()
+        aargs: tuple[str, ...] = ()
+        for pos, aidx in enumerate(selected):
+            aargs += (
+                "# keep an audio track",
+                "-map",
+                f'0:{audios[aidx]["index"]}',
+                "# set its sampling rate",
+                f"-ar:a:{pos}",
+                f'{options.audio_sampling or audios[aidx]["sample_rate"]}',
+            )
+        return aargs + (
             "# select audio codec",
             "-c:a",
             options.audio_codec,
-        )
-        if options.audio_sampling:
-            aargs += (
-                "# set specified sampling rate",
-                "-ar",
-                f"{options.audio_sampling}",
-            )
-        else:
-            aargs += ("# copy original sampling rate", "-ar", f"{sampling}")
-        aargs += (
             "# select audio profile",
             "-profile:a",
             options.audio_profile,
@@ -986,6 +1051,10 @@ def transcode(options: Options, technical: Technical) -> None:
             "-b:a",
             f"{options.audio_bitrate}k",
         )
+
+    # CODECS must cover the audio of a variant, even when it is a
+    # separate rendition. One track is enough as they share the codec.
+    cargs = audio_args([options.audio_default] if audios else [])
 
     # Progressive MP4
     if options.mp4:
@@ -1043,7 +1112,13 @@ def transcode(options: Options, technical: Technical) -> None:
         )
         if options.mp4_preset:
             args += ("# set the video preset", "-preset", options.mp4_preset)
-        args += aargs
+        args += audio_args(
+            [
+                aidx
+                for aidx in range(len(audios))
+                if options.mp4_all_audio or aidx == options.audio_default
+            ]
+        )
         args += (
             "# don't copy chapters from the input",
             "-map_chapters",
@@ -1056,6 +1131,24 @@ def transcode(options: Options, technical: Technical) -> None:
         )
 
     # HLS
+    # Audio tracks to mux in each variant: all of them, or, with
+    # separate audio, a single one for each variant without video. The
+    # trailing ones are the audio renditions.
+    audio_tracks: list[list[int]]
+    audio_variants: dict[int, int] = {}
+    if options.audio_separate:
+        audio_tracks = [
+            [options.audio_default] if bitrate == 0 else []
+            for bitrate in options.video_bitrates
+        ]
+        audio_variants = {
+            aidx: len(audio_tracks) - len(audios) + aidx for aidx in range(len(audios))
+        }
+        for aidx, vidx in audio_variants.items():
+            audio_tracks[vidx] = [aidx]
+    else:
+        audio_tracks = [list(range(len(audios)))] * len(options.video_widths)
+
     playlists: dict[int, Playlist] = {}
     variants = zip(
         options.video_widths,
@@ -1128,7 +1221,7 @@ def transcode(options: Options, technical: Technical) -> None:
             "-f",
             "hls",
             *vargs,
-            *(aargs if not options.audio_separate or vbitrate == 0 else ()),
+            *audio_args(audio_tracks[idx]),
             "# duration of an HLS segment",
             "-hls_time",
             f"{options.hls_time}",
@@ -1191,10 +1284,13 @@ def transcode(options: Options, technical: Technical) -> None:
                 "mp4",
                 "# use same encoding arguments as the normal video:",
                 *vargs,
-                *aargs,
-                "# but keep only one frame",
-                "-frames:v",
-                "1",
+                *cargs,
+            )
+            if vbitrate > 0:
+                args += ("# but keep only one frame", "-frames:v", "1")
+            else:
+                args += ("# but keep it short", "-t", "1")
+            args += (
                 "# put the result into a temporary file",
                 f"_{idx}.mp4",
             )
@@ -1212,15 +1308,34 @@ def transcode(options: Options, technical: Technical) -> None:
 
     logger.info("write master playlist")
     no_codecs = False
+    # Advertise the audio tracks only when a player can switch them
+    audio_media = options.audio_separate or len(audios) > 1
 
     def audio_group(gidx: int) -> str:
-        """Return the audio rendition group for one playlist prefix."""
-        return f"audio{gidx}" if gidx else "audio"
+        """Return the audio rendition group for one playlist prefix.
+
+        Separate audio needs one group per prefix, as the URI of a
+        rendition depends on the prefix.
+
+        """
+        return f"audio{gidx}" if options.audio_separate and gidx else "audio"
+
+    def codecs_of(idx: int) -> str | None:
+        """Return the codecs of one output, from its sample MP4."""
+        nonlocal no_codecs
+        if no_codecs or not options.hls_add_codecs:
+            return None
+        try:
+            return extract_codecs(options, f"_{idx}.mp4")
+        except FileNotFoundError:
+            logger.warning("cannot extract codec due to mp4file missing")
+            no_codecs = True
+            return None
 
     with open(options.hls_master_playlist, "w", encoding="utf-8") as master:
         master.write("#EXTM3U\n")
         master.write("#EXT-X-INDEPENDENT-SEGMENTS\n")
-        if options.audio_separate:
+        if audio_media:
             # RFC 8216 says:
             #
             #    The EXT-X-MEDIA tag and the AUDIO, VIDEO, and SUBTITLES
@@ -1230,32 +1345,44 @@ def transcode(options: Options, technical: Technical) -> None:
             #    4 or higher in the Master Playlist but is not required to do
             #    so.
             master.write("#EXT-X-VERSION:4\n")
-            for gidx, prefix in enumerate(options.hls_playlist_prefix):
-                g = audio_group(gidx)
-                master.write(
-                    f'#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="{g}",NAME="Audio",'
-                    "DEFAULT=YES,AUTOSELECT=YES,"
-                    f'CHANNELS="{channels}",'
-                    f'URI="{prefix}'
-                    f'{playlists[max(playlists.keys())]["name"]}"\n'
+            for aidx, audio in enumerate(audios):
+                describe = (
+                    f'NAME="{options.audio_names[aidx]}",'
+                    f"DEFAULT={'YES' if aidx == options.audio_default else 'NO'},"
+                    f'AUTOSELECT=YES,CHANNELS="{audio["channels"]}"'
+                )
+                language = options.audio_languages[aidx]
+                if language != "und":
+                    describe = f'LANGUAGE="{language}",{describe}'
+                if not options.audio_separate:
+                    # Without a URI, the track sits in every variant
+                    master.write(
+                        f'#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",{describe}\n'
+                    )
+                    continue
+                master.writelines(
+                    f'#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="{audio_group(gidx)}",'
+                    f'{describe},URI="{prefix}'
+                    f'{playlists[audio_variants[aidx]]["name"]}"\n'
+                    for gidx, prefix in enumerate(options.hls_playlist_prefix)
                 )
         else:
             master.write("#EXT-X-VERSION:3\n")
         for idx in playlists:
+            if idx in audio_variants.values():
+                # This is an audio rendition, not a variant.
+                continue
             if not options.audio_only and options.video_bitrates[idx] == 0:
                 # We didn't ask for an audio only track but we have
                 # one, skip it.
                 continue
-            codecs = None
-            if not no_codecs and options.hls_add_codecs:
-                try:
-                    codecs = extract_codecs(options, f"_{idx}.mp4")
-                except FileNotFoundError:
-                    logger.warning("cannot extract codec due to mp4file missing")
-                    no_codecs = True
+            codecs = codecs_of(idx)
             bandwidth = options.video_bitrates[idx]
-            if audio:
-                bandwidth += options.audio_bitrate
+            if audios:
+                # With separate audio, only one track is fetched
+                bandwidth += options.audio_bitrate * (
+                    1 if options.audio_separate else len(audios)
+                )
             for gidx, prefix in enumerate(options.hls_playlist_prefix):
                 master.write(f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth}000,")
                 if options.video_bitrates[idx] > 0:
@@ -1265,11 +1392,23 @@ def transcode(options: Options, technical: Technical) -> None:
                     )
                 if codecs:
                     master.write(f'CODECS="{codecs}",')
-                if options.audio_separate:
+                if audio_media:
                     master.write(f'AUDIO="{audio_group(gidx)}",')
                 master.write(
                     f'NAME="{options.video_names[idx]}"\n'
                     f'{prefix}{playlists[idx]["name"]}\n'
+                )
+        if options.audio_only and options.audio_separate:
+            # The audio only variant is the default rendition itself
+            vidx = audio_variants[options.audio_default]
+            codecs = codecs_of(vidx)
+            for gidx, prefix in enumerate(options.hls_playlist_prefix):
+                master.write(f"#EXT-X-STREAM-INF:BANDWIDTH={options.audio_bitrate}000,")
+                if codecs:
+                    master.write(f'CODECS="{codecs}",')
+                master.write(
+                    f'AUDIO="{audio_group(gidx)}",NAME="{options.video_names[vidx]}"\n'
+                    f'{prefix}{playlists[vidx]["name"]}\n'
                 )
 
     codecs = None
@@ -1318,11 +1457,11 @@ if __name__ == "__main__":
 
         # Probe input file
         technical = probe(options)
-        if not technical["audio"] and options.audio_only:
+        if not technical["audios"] and options.audio_only:
             raise RuntimeError(
                 f"no audio track in {options.input}, cannot do an audio only variant"
             )
-        if not technical["audio"] and options.audio_separate:
+        if not technical["audios"] and options.audio_separate:
             raise RuntimeError(
                 f"no audio track in {options.input}, cannot do a separate audio track"
             )
