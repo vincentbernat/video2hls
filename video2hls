@@ -431,7 +431,7 @@ class ColorizingStreamHandler(logging.StreamHandler):
         if fg in self.color_map:
             params.append(str(self.color_map[fg] + 30))
         params.append("1m")
-        level = "[{}]".format(level)
+        level = f"[{level}]"
         return "\n".join(
             [
                 "{}: {}".format(
@@ -495,10 +495,10 @@ def run(options, what, *args):
                 what,
                 f" A: {jargs}",
                 "\n".join(
-                    [" O: {}".format(line) for line in stdout.rstrip().split("\n")]
+                    [f" O: {line}" for line in stdout.rstrip().split("\n")]
                 ),
                 "\n".join(
-                    [" E: {}".format(line) for line in stderr.rstrip().split("\n")]
+                    [f" E: {line}" for line in stderr.rstrip().split("\n")]
                 ),
             )
         )
