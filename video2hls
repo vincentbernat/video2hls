@@ -40,7 +40,6 @@ import html
 import json
 import logging
 import logging.handlers
-import math
 import operator
 import os
 import re
@@ -873,7 +872,6 @@ def transcode(options, technical):
     width = int(video["width"])
     fps = video["r_frame_rate"]
     fps = operator.truediv(*(int(x) for x in fps.split("/")))
-    keyf = math.ceil(fps * options.hls_time)
     logger.info(f"input video is {width}x{height} at {fps:,.2f}fps")
     if audio:
         channels = audio["channels"]
@@ -1053,12 +1051,9 @@ def transcode(options, technical):
             "# duration of an HLS segment",
             "-hls_time",
             f"{options.hls_time}",
-            "# this is fairly important:",
-            f"# set I-frame at the beginning of each segment (fps={fps:,.3f})",
-            "-g",
-            f"{keyf}",
-            "-keyint_min",
-            f"{keyf}",
+            "# align all segments for key frames",
+            "-force_key_frames:v",
+            f"expr:gte(t,n_forced*{options.hls_time})",
             "# set mux delay/preload to 0 (not useful for VOD):",
             "-muxdelay",
             "0",
