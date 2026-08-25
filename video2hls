@@ -1133,6 +1133,7 @@ def transcode(options, technical):
     no_codecs = False
     with open(options.hls_master_playlist, "w", encoding="utf-8") as master:
         master.write("#EXTM3U\n")
+        master.write("#EXT-X-INDEPENDENT-SEGMENTS\n")
         if options.audio_separate:
             # RFC 8216 says:
             #
