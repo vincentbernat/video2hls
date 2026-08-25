@@ -385,9 +385,11 @@ def parse_args():
             options.output += "_output"
     options.output = os.path.abspath(options.output)
 
-    # A separate audio playlist needs an audio track
+    # These both need an audio track
     if not options.audio:
         options.audio_separate = False
+        if options.audio_only:
+            parser.error("--audio-only cannot be used with --no-audio")
 
     return options
 
