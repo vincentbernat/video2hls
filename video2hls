@@ -396,9 +396,12 @@ def parse_args():
 class ColorizingStreamHandler(logging.StreamHandler):
     """Provide a nicer logging output to error output with colors."""
 
-    color_map = {x: i for i, x in enumerate(
-        ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
-    )}
+    color_map = {
+        x: i
+        for i, x in enumerate(
+            ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+        )
+    }
     level_map = {
         logging.DEBUG: (None, "blue", " DBG"),
         logging.INFO: (None, "green", "INFO"),
@@ -489,12 +492,8 @@ def run(options, what, *args):
             "{} error:\n{}\n{}\n{}".format(
                 what,
                 f" A: {jargs}",
-                "\n".join(
-                    [f" O: {line}" for line in stdout.rstrip().split("\n")]
-                ),
-                "\n".join(
-                    [f" E: {line}" for line in stderr.rstrip().split("\n")]
-                ),
+                "\n".join([f" O: {line}" for line in stdout.rstrip().split("\n")]),
+                "\n".join([f" E: {line}" for line in stderr.rstrip().split("\n")]),
             )
         )
         raise RuntimeError(f"Unable to execute {what}")
@@ -1194,12 +1193,10 @@ def transcode(options, technical):
             pass
     codecs = f'; codecs="{codecs}"' if codecs else ""
     poster = f' poster="{options.poster_filename}"' if options.poster else ""
-    logger.info(
-        f"""video can be served with:
+    logger.info(f"""video can be served with:
 
     <video{poster} controls>
-      <source src="index.m3u8" type="application/vnd.apple.mpegurl">"""
-    )
+      <source src="index.m3u8" type="application/vnd.apple.mpegurl">""")
     if options.mp4:
         logger.info(
             f'      <source src="{options.mp4_filename}" ' f'type="video/mp4{codecs}">'
