@@ -476,27 +476,21 @@ def run(options, what, *args):
     jargs = " \\\n   ".join(jargs)
     logger.debug(f"execute {what} {jargs}")
 
-    proc = subprocess.Popen(
+    proc = subprocess.run(
         [what] + [arg for arg in args if not arg.startswith("# ")],
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
-    stdout, stderr = proc.communicate(None)
-    stdout = stdout.decode("utf-8", "replace")
-    stderr = stderr.decode("utf-8", "replace")
 
     if proc.returncode != 0:
-        logger.error(
-            "{} error:\n{}\n{}\n{}".format(
-                what,
-                f" A: {jargs}",
-                "\n".join([f" O: {line}" for line in stdout.rstrip().split("\n")]),
-                "\n".join([f" E: {line}" for line in stderr.rstrip().split("\n")]),
-            )
-        )
+        out = "\n".join(f" O: {line}" for line in proc.stdout.rstrip().split("\n"))
+        err = "\n".join(f" E: {line}" for line in proc.stderr.rstrip().split("\n"))
+        logger.error(f"{what} error:\n A: {jargs}\n{out}\n{err}")
         raise RuntimeError(f"Unable to execute {what}")
-    return stdout
+    return proc.stdout
 
 
 def probe(options):
