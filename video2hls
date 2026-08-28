@@ -46,6 +46,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from types import MappingProxyType
 
 logger = logging.getLogger("video2hls")
 
@@ -395,19 +396,23 @@ def parse_args():
 class ColorizingStreamHandler(logging.StreamHandler):
     """Provide a nicer logging output to error output with colors."""
 
-    color_map = {
-        x: i
-        for i, x in enumerate(
-            ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
-        )
-    }
-    level_map = {
-        logging.DEBUG: (None, "blue", " DBG"),
-        logging.INFO: (None, "green", "INFO"),
-        logging.WARNING: (None, "yellow", "WARN"),
-        logging.ERROR: (None, "red", " ERR"),
-        logging.CRITICAL: ("red", "white", "CRIT"),
-    }
+    color_map = MappingProxyType(
+        {
+            x: i
+            for i, x in enumerate(
+                ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+            )
+        }
+    )
+    level_map = MappingProxyType(
+        {
+            logging.DEBUG: (None, "blue", " DBG"),
+            logging.INFO: (None, "green", "INFO"),
+            logging.WARNING: (None, "yellow", "WARN"),
+            logging.ERROR: (None, "red", " ERR"),
+            logging.CRITICAL: ("red", "white", "CRIT"),
+        }
+    )
     csi = "\x1b["
     reset = "\x1b[0m"
 
@@ -967,14 +972,14 @@ def transcode(options, technical):
     for idx, (vwidth, vbitrate, vcodec, vname, vprofile) in enumerate(variants):
         logger.debug(f"setup HLS for {vname}")
         resolution = int(vwidth / options.ratio)
-        voptions = dict(
-            width=vwidth,
-            resolution=resolution,
-            bitrate=vbitrate,
-            codec=vcodec,
-            name=vname,
-            profile=vprofile,
-        )
+        voptions = {
+            "width": vwidth,
+            "resolution": resolution,
+            "bitrate": vbitrate,
+            "codec": vcodec,
+            "name": vname,
+            "profile": vprofile,
+        }
         twidth, theight = contained_in((width, height), (vwidth, resolution))
         vfilters = [f"scale={twidth}:{theight}", "format=yuv420p"]
         cfilter = "apply filters: scale"
@@ -1244,5 +1249,5 @@ if __name__ == "__main__":
             os.remove(f)
 
     except Exception as e:
-        logger.exception("%s", e)
+        logger.exception("%s", e)  # noqa: TRY401
         sys.exit(1)
