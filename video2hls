@@ -40,7 +40,6 @@ import html
 import json
 import logging
 import logging.handlers
-import operator
 import os
 import re
 import shlex
@@ -671,7 +670,8 @@ def fix_options(options, technical):
             options.video_bitrates[idx] = 0
 
     # Handle ratio
-    options.ratio = operator.truediv(*(int(x) for x in options.ratio.split(":", 1)))
+    num, den = (int(x) for x in options.ratio.split(":", 1))
+    options.ratio = num / den
 
     # Handle video names
     if len(options.video_names) < length:
@@ -864,8 +864,8 @@ def transcode(options, technical):
     # Grab interesting facts about video
     height = int(video["height"])
     width = int(video["width"])
-    fps = video["r_frame_rate"]
-    fps = operator.truediv(*(int(x) for x in fps.split("/")))
+    num, den = (int(x) for x in video["r_frame_rate"].split("/"))
+    fps = num / den
     logger.info(f"input video is {width}x{height} at {fps:,.2f}fps")
     if audio:
         channels = audio["channels"]
