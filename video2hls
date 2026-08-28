@@ -59,7 +59,7 @@ class CustomFormatter(
 def parse_args():
     """Parse arguments."""
     parser = argparse.ArgumentParser(
-        description=sys.modules[__name__].__doc__, formatter_class=CustomFormatter
+        description=__doc__, formatter_class=CustomFormatter
     )
 
     g = parser.add_mutually_exclusive_group()
@@ -417,7 +417,7 @@ class ColorizingStreamHandler(logging.StreamHandler):
         return isatty and isatty()
 
     def format(self, record):
-        message = logging.StreamHandler.format(self, record)
+        message = super().format(record)
         params = []
         levelno = record.levelno
         if levelno not in self.level_map:
@@ -429,25 +429,19 @@ class ColorizingStreamHandler(logging.StreamHandler):
             params.append(str(self.color_map[fg] + 30))
         params.append("1m")
         level = f"[{level}]"
-        return "\n".join(
-            [
-                "{}: {}".format(
-                    self.is_tty
-                    and params
-                    and "".join((self.csi, ";".join(params), level, self.reset))
-                    or level,
-                    line,
-                )
-                for line in message.split("\n")
-            ]
+        prefix = (
+            "".join((self.csi, ";".join(params), level, self.reset))
+            if self.is_tty
+            else level
         )
+        return "\n".join(f"{prefix}: {line}" for line in message.split("\n"))
 
 
 def setup_logging(options):
     """Configure logging."""
     root = logging.getLogger("")
     root.setLevel(logging.WARNING)
-    logger.setLevel(options.debug and logging.DEBUG or logging.INFO)
+    logger.setLevel(logging.DEBUG if options.debug else logging.INFO)
     if not options.silent:
         root.addHandler(ColorizingStreamHandler())
 
@@ -552,7 +546,7 @@ def extract_codecs(options, sample):
     result = result.split("\n")
     # The codecs are the ones in /moov/trak/mdia/minf/stbl/stdsd
     codec_re = re.compile(
-        r".*: type (?P<codec>\S+) " r"\(moov.trak.mdia.minf.stbl.stsd.(?P=codec)\)"
+        r".*: type (?P<codec>\S+) \(moov.trak.mdia.minf.stbl.stsd.(?P=codec)\)"
     )
     attribute_re = re.compile(r".*: (?P<attribute>\S+) = (?P<value>\d+) .*")
     info_re = re.compile(r".*: info = <\d+ bytes>\s+(?P<byte>\d{2}) .*")
@@ -583,7 +577,7 @@ def extract_codecs(options, sample):
                         elif mo.group("attribute") == "AVCLevelIndication":
                             level = int(mo.group("value"))
                     if all(x is not None for x in (profile, constraints, level)):
-                        codec = f"avc1.{profile:02x}" f"{constraints:02x}{level:02x}"
+                        codec = f"avc1.{profile:02x}{constraints:02x}{level:02x}"
                         logger.debug(f"found codec {codec} in {sample}")
                         results.append(codec)
                     else:
@@ -607,7 +601,7 @@ def extract_codecs(options, sample):
                         elif osti is ...:
                             mo = info_re.match(line)
                             if not mo:
-                                raise RuntimeError("cannot decode " "specific info")
+                                raise RuntimeError("cannot decode specific info")
                             osti = (int(mo.group("byte"), 16) & 0xF8) >> 3
                     if all(x is not None for x in (oti, osti)):
                         codec = f"mp4a.{oti:02x}.{osti}"
@@ -659,8 +653,8 @@ def fix_options(options, technical):
             value.extend([value[-1]] * diff)
 
     # Fix bitrate when width is 0
-    for idx in range(len(options.video_widths)):
-        if options.video_widths[idx] == 0:
+    for idx, width in enumerate(options.video_widths):
+        if width == 0:
             options.video_bitrates[idx] = 0
 
     # Handle ratio
@@ -670,12 +664,10 @@ def fix_options(options, technical):
     # Handle video names
     if len(options.video_names) < length:
         diff = length - len(options.video_names)
-        more = []
-        for idx in range(len(options.video_widths)):
-            if options.video_bitrates[idx] > 0:
-                more.append(f"{int(options.video_widths[idx]/options.ratio)}p")
-            else:
-                more.append("Audio only")
+        more = [
+            f"{int(width / options.ratio)}p" if bitrate > 0 else "Audio only"
+            for width, bitrate in zip(options.video_widths, options.video_bitrates)
+        ]
         options.video_names.extend(more[-diff:])
 
     # Add bitrate factor to bitrates
@@ -729,7 +721,7 @@ def poster(options, technical):
     # Determine position
     mo = re.match(r"(?:(?P<percent>\d+)%|(?P<seconds>\d+)s)", options.poster_seek)
     if not mo:
-        raise RuntimeError(f"invalid value for poster seek: " f"{options.poster_seek}")
+        raise RuntimeError(f"invalid value for poster seek: {options.poster_seek}")
     if mo.group("percent"):
         percent = int(mo.group("percent"))
         seek = float(technical["video"]["duration"]) * percent / 100
@@ -900,7 +892,7 @@ def transcode(options, technical):
         resolution = int(options.mp4_width / options.ratio)
         twidth, theight = contained_in((width, height), (options.mp4_width, resolution))
         logger.info(
-            f"progressive MP4 is {twidth}x{theight} at " f"{options.mp4_bitrate}kbps"
+            f"progressive MP4 is {twidth}x{theight} at {options.mp4_bitrate}kbps"
         )
         vfilters = [f"scale={twidth}:{theight}", "format=yuv420p"]
         cfilter = "apply filters: scale"
@@ -1159,13 +1151,13 @@ def transcode(options, technical):
                 try:
                     codecs = extract_codecs(options, f"_{idx}.mp4")
                 except FileNotFoundError:
-                    logger.warning("cannot extract codec due to " "mp4file missing")
+                    logger.warning("cannot extract codec due to mp4file missing")
                     no_codecs = True
             bandwidth = options.video_bitrates[idx]
             if audio:
                 bandwidth += options.audio_bitrate
             for gidx, prefix in enumerate(options.hls_playlist_prefix):
-                master.write("#EXT-X-STREAM-INF:" f"BANDWIDTH={bandwidth}000,")
+                master.write(f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth}000,")
                 if options.video_bitrates[idx] > 0:
                     master.write(
                         f'RESOLUTION={playlists[idx]["resolution"]},'
@@ -1194,12 +1186,11 @@ def transcode(options, technical):
       <source src="index.m3u8" type="application/vnd.apple.mpegurl">""")
     if options.mp4:
         logger.info(
-            f'      <source src="{options.mp4_filename}" ' f'type="video/mp4{codecs}">'
+            f'      <source src="{options.mp4_filename}" type="video/mp4{codecs}">'
         )
     if options.chapters and technical["chapters"]:
         logger.info(
-            f'      <track kind="chapters" '
-            f'src="{options.chapters_filename}" default>'
+            f'      <track kind="chapters" src="{options.chapters_filename}" default>'
         )
     logger.info("    </video>")
 
@@ -1231,12 +1222,11 @@ if __name__ == "__main__":
             raise RuntimeError(f"no video track in {options.input}")
         if not technical["audio"] and options.audio_only:
             raise RuntimeError(
-                f"no audio track in {options.input}, " "cannot do an audio only variant"
+                f"no audio track in {options.input}, cannot do an audio only variant"
             )
         if not technical["audio"] and options.audio_separate:
             raise RuntimeError(
-                f"no audio track in {options.input}, "
-                "cannot do a separate audio track"
+                f"no audio track in {options.input}, cannot do a separate audio track"
             )
 
         # Fix options to match input video
