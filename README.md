@@ -7,7 +7,7 @@ bit rates. Depending on current network conditions, the player
 automatically selects the appropriate bitrate to download the next
 segment.
 
-The script needs Python 3.9 and you can run it with `--help` to get
+The script needs Python 3.10 and you can run it with `--help` to get
 more information about it.
 
 Some browsers may not support natively HLS. In this case, one can use

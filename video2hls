@@ -34,6 +34,8 @@ The default output directory is the basename of the input video.
 
 """
 
+from __future__ import annotations
+
 import argparse
 import glob
 import html
@@ -46,9 +48,92 @@ import shlex
 import shutil
 import subprocess
 import sys
-from types import MappingProxyType
+from collections.abc import Mapping
+from types import EllipsisType, MappingProxyType
+from typing import Any, TypedDict
 
 logger = logging.getLogger("video2hls")
+
+Stream = dict[str, Any]
+Chapter = dict[str, Any]
+
+
+class Technical(TypedDict):
+    """Technical information extracted from the input video."""
+
+    video: Stream
+    audio: Stream | None
+    chapters: list[Chapter]
+
+
+class Playlist(TypedDict):
+    """A media playlist to be referenced in the master playlist."""
+
+    name: str
+    resolution: str
+
+
+class Options(argparse.Namespace):
+    """Command-line options, once parsed and fixed."""
+
+    debug: bool
+    silent: bool
+
+    hls_type: str
+    hls_time: int
+    hls_segments: str
+    hls_segment_prefix: str
+    hls_playlist_prefix: list[str]
+    hls_master_playlist: str
+    hls_add_codecs: bool
+
+    video_widths: list[int]
+    video_bitrates: list[int]
+    video_codecs: list[str]
+    video_profiles: list[str]
+    video_names: list[str]
+    video_overlay: str | None
+    video_bitrate_factor: float
+    video_presets: list[str]
+
+    audio: bool
+    audio_sampling: int | None
+    audio_bitrate: int
+    audio_codec: str
+    audio_profile: str
+    audio_only: bool
+    audio_separate: bool
+
+    mp4: bool
+    mp4_width: int
+    mp4_max_width: int
+    mp4_bitrate_factor: float
+    mp4_bitrate: int
+    mp4_codec: str
+    mp4_profile: str
+    mp4_overlay: str | None
+    mp4_filename: str
+    mp4_preset: str | None
+
+    poster: bool
+    poster_quality: int
+    poster_grayscale: bool
+    poster_filename: str
+    poster_seek: str
+    poster_width: int
+    poster_max_width: int
+
+    chapters: bool
+    chapters_filename: str
+
+    ffmpeg: str
+    ffprobe: str
+    mp4file: str
+
+    ratio: float
+    output: str
+    output_overwrite: bool
+    input: str
 
 
 class CustomFormatter(
@@ -57,17 +142,23 @@ class CustomFormatter(
     pass
 
 
-def parse_args():
+def ratio(value: str) -> float:
+    """Turn a ratio like 16:9 into a number."""
+    num, den = (int(x) for x in value.split(":", 1))
+    return num / den
+
+
+def parse_args() -> Options:
     """Parse arguments."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=CustomFormatter
     )
 
-    g = parser.add_mutually_exclusive_group()
-    g.add_argument(
+    exclusive = parser.add_mutually_exclusive_group()
+    exclusive.add_argument(
         "--debug", "-d", action="store_true", default=False, help="enable debugging"
     )
-    g.add_argument(
+    exclusive.add_argument(
         "--silent",
         "-s",
         action="store_true",
@@ -364,7 +455,11 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--ratio", metavar="RATIO", default="16:9", help="video ratio (not enforced)"
+        "--ratio",
+        metavar="RATIO",
+        default="16:9",
+        type=ratio,
+        help="video ratio (not enforced)",
     )
     parser.add_argument("--output", metavar="DIR", help="output directory")
     parser.add_argument(
@@ -375,7 +470,7 @@ def parse_args():
     )
     parser.add_argument("input", metavar="VIDEO", help="video to be converted")
 
-    options = parser.parse_args()
+    options = parser.parse_args(namespace=Options())
 
     # Handle output directory
     if options.output is None:
@@ -396,7 +491,7 @@ def parse_args():
 class ColorizingStreamHandler(logging.StreamHandler):
     """Provide a nicer logging output to error output with colors."""
 
-    color_map = MappingProxyType(
+    color_map: Mapping[str, int] = MappingProxyType(
         {
             x: i
             for i, x in enumerate(
@@ -404,7 +499,7 @@ class ColorizingStreamHandler(logging.StreamHandler):
             )
         }
     )
-    level_map = MappingProxyType(
+    level_map: Mapping[int, tuple[str | None, str, str]] = MappingProxyType(
         {
             logging.DEBUG: (None, "blue", " DBG"),
             logging.INFO: (None, "green", "INFO"),
@@ -417,18 +512,18 @@ class ColorizingStreamHandler(logging.StreamHandler):
     reset = "\x1b[0m"
 
     @property
-    def is_tty(self):
+    def is_tty(self) -> bool:
         isatty = getattr(self.stream, "isatty", None)
-        return isatty and isatty()
+        return bool(isatty and isatty())
 
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         message = super().format(record)
-        params = []
+        params: list[str] = []
         levelno = record.levelno
         if levelno not in self.level_map:
             levelno = logging.WARNING
         bg, fg, level = self.level_map[levelno]
-        if bg in self.color_map:
+        if bg is not None and bg in self.color_map:
             params.append(str(self.color_map[bg] + 40))
         if fg in self.color_map:
             params.append(str(self.color_map[fg] + 30))
@@ -442,7 +537,7 @@ class ColorizingStreamHandler(logging.StreamHandler):
         return "\n".join(f"{prefix}: {line}" for line in message.split("\n"))
 
 
-def setup_logging(options):
+def setup_logging(options: Options) -> None:
     """Configure logging."""
     root = logging.getLogger("")
     root.setLevel(logging.WARNING)
@@ -451,7 +546,7 @@ def setup_logging(options):
         root.addHandler(ColorizingStreamHandler())
 
 
-def run(options, what, *args):
+def run(options: Options, what: str, *args: str) -> str:
     """Execute either ffmpeg or ffprobe with the provided arguments.
 
     Comments are filtered out, except when displaying to user.
@@ -461,7 +556,7 @@ def run(options, what, *args):
         what = getattr(options, what)
 
     # Pretty format arguments
-    jargs = []
+    jargs: list[str] = []
     for arg in args:
         if arg.startswith("# "):
             jargs.append(f"`{arg}`")
@@ -472,8 +567,8 @@ def run(options, what, *args):
                 jargs[-1] += f" {shlex.quote(arg)}"
     if jargs and jargs[0].startswith("`"):
         jargs.insert(0, "")
-    jargs = " \\\n   ".join(jargs)
-    logger.debug(f"execute {what} {jargs}")
+    pretty = " \\\n   ".join(jargs)
+    logger.debug(f"execute {what} {pretty}")
 
     proc = subprocess.run(
         [what] + [arg for arg in args if not arg.startswith("# ")],
@@ -487,12 +582,12 @@ def run(options, what, *args):
     if proc.returncode != 0:
         out = "\n".join(f" O: {line}" for line in proc.stdout.rstrip().split("\n"))
         err = "\n".join(f" E: {line}" for line in proc.stderr.rstrip().split("\n"))
-        logger.error(f"{what} error:\n A: {jargs}\n{out}\n{err}")
+        logger.error(f"{what} error:\n A: {pretty}\n{out}\n{err}")
         raise RuntimeError(f"Unable to execute {what}")
     return proc.stdout
 
 
-def probe(options):
+def probe(options: Options) -> Technical:
     """Probe input file to extract technical information.
 
     We only keep the first video stream and the first audio
@@ -519,18 +614,23 @@ def probe(options):
     streams = info.get("streams")
 
     # Only keep first audio and first video
-    video_stream = next((x for x in streams if x["codec_type"] == "video"), None)
-    audio_stream = next((x for x in streams if x["codec_type"] == "audio"), None)
+    video_stream: Stream | None = next(
+        (x for x in streams if x["codec_type"] == "video"), None
+    )
+    audio_stream: Stream | None = next(
+        (x for x in streams if x["codec_type"] == "audio"), None
+    )
     if not options.audio:
         audio_stream = None
+    if video_stream is None:
+        raise RuntimeError(f"no video track in {options.input}")
 
-    if video_stream:
-        _par = video_stream.get("sample_aspect_ratio", "1:1")
-        _n, _d = map(int, _par.split(":"))
-        par = _n / _d
-        video_stream["pixel_aspect_ratio"] = par
-        if "duration" not in video_stream and "format" in info:
-            video_stream["duration"] = info["format"].get("duration")
+    _par = video_stream.get("sample_aspect_ratio", "1:1")
+    _n, _d = map(int, _par.split(":"))
+    par = _n / _d
+    video_stream["pixel_aspect_ratio"] = par
+    if "duration" not in video_stream and "format" in info:
+        video_stream["duration"] = info["format"].get("duration")
     return {
         "video": video_stream,
         "audio": audio_stream,
@@ -538,7 +638,7 @@ def probe(options):
     }
 
 
-def extract_codecs(options, sample):
+def extract_codecs(options: Options, sample: str) -> str:
     """Extract codecs information from the given MP4 sample.
 
     This makes use of mp4file since extracting this information is
@@ -548,7 +648,7 @@ def extract_codecs(options, sample):
 
     """
     result = run(options, "mp4file", "--dump", sample)
-    result = result.split("\n")
+    lines = result.split("\n")
     # The codecs are the ones in /moov/trak/mdia/minf/stbl/stdsd
     codec_re = re.compile(
         r".*: type (?P<codec>\S+) \(moov.trak.mdia.minf.stbl.stsd.(?P=codec)\)"
@@ -556,20 +656,20 @@ def extract_codecs(options, sample):
     attribute_re = re.compile(r".*: (?P<attribute>\S+) = (?P<value>\d+) .*")
     info_re = re.compile(r".*: info = <\d+ bytes>\s+(?P<byte>\d{2}) .*")
     codecs = {
-        mo.group("codec") for mo in [codec_re.match(line) for line in result] if mo
+        mo.group("codec") for mo in [codec_re.match(line) for line in lines] if mo
     }
-    results = []
+    results: list[str] = []
     for codec in codecs:
         if codec == "avc1":
             # Look for moov.trak.mdia.minf.stbl.stsd.avc1.avcC
-            for idx, line in enumerate(result):
+            for idx, line in enumerate(lines):
                 if "(moov.trak.mdia.minf.stbl.stsd.avc1.avcC)" in line:
-                    spaces = len(line) - len(line.lstrip(" "))
-                    spaces = " " * (spaces + 1)
+                    indent = len(line) - len(line.lstrip(" "))
+                    spaces = " " * (indent + 1)
                     profile = None
                     constraints = None
                     level = None
-                    for line in result[idx + 1 :]:
+                    for line in lines[idx + 1 :]:
                         if not line.startswith(spaces):
                             break
                         mo = attribute_re.match(line)
@@ -589,13 +689,13 @@ def extract_codecs(options, sample):
                         raise RuntimeError("unable to decode AVC1 codec")
         elif codec == "mp4a":
             # Look for moov.trak.mdia.minf.stbl.stsd.mp4a.esds
-            for idx, line in enumerate(result):
+            for idx, line in enumerate(lines):
                 if "(moov.trak.mdia.minf.stbl.stsd.mp4a.esds)" in line:
-                    spaces = len(line) - len(line.lstrip(" "))
-                    spaces = " " * (spaces + 1)
+                    indent = len(line) - len(line.lstrip(" "))
+                    spaces = " " * (indent + 1)
                     oti = None
-                    osti = None
-                    for line in result[idx + 1 :]:
+                    osti: int | EllipsisType | None = None
+                    for line in lines[idx + 1 :]:
                         if not line.startswith(spaces):
                             break
                         mo = attribute_re.match(line)
@@ -617,7 +717,7 @@ def extract_codecs(options, sample):
     return ",".join(results)
 
 
-def contained_in(original, target):
+def contained_in(original: tuple[int, int], target: tuple[int, int]) -> tuple[int, int]:
     """Return dimension to ensure original video fits inside target."""
     ratio = original[0] / original[1]
     width, height = target
@@ -628,7 +728,7 @@ def contained_in(original, target):
     return (width // 2 * 2, height // 2 * 2)
 
 
-def fix_options(options, technical):
+def fix_options(options: Options, technical: Technical) -> None:
     """Fix options to remove too great sizes."""
     # If no HLS playlist prefix, use an empty one
     if len(options.hls_playlist_prefix) == 0:
@@ -661,10 +761,6 @@ def fix_options(options, technical):
     for idx, width in enumerate(options.video_widths):
         if width == 0:
             options.video_bitrates[idx] = 0
-
-    # Handle ratio
-    num, den = (int(x) for x in options.ratio.split(":", 1))
-    options.ratio = num / den
 
     # Handle video names
     if len(options.video_names) < length:
@@ -716,7 +812,7 @@ def fix_options(options, technical):
         )
 
 
-def poster(options, technical):
+def poster(options: Options, technical: Technical) -> None:
     """Create poster."""
     if not options.poster:
         logger.debug("skip poster creation")
@@ -729,10 +825,9 @@ def poster(options, technical):
         raise RuntimeError(f"invalid value for poster seek: {options.poster_seek}")
     if mo.group("percent"):
         percent = int(mo.group("percent"))
-        seek = float(technical["video"]["duration"]) * percent / 100
+        seek = int(float(technical["video"]["duration"]) * percent / 100)
     else:
-        seek = mo.group("seconds")
-    seek = int(seek)
+        seek = int(mo.group("seconds"))
     logger.debug(f"seek position for poster is {seek}s")
 
     # Filter to apply
@@ -784,7 +879,7 @@ def poster(options, technical):
     )
 
 
-def webvtt_timestamp(seconds):
+def webvtt_timestamp(seconds: float) -> str:
     """Turn a number of seconds into a WebVTT timestamp."""
     milliseconds = round(seconds * 1000)
     milliseconds, ms = divmod(milliseconds, 1000)
@@ -793,7 +888,7 @@ def webvtt_timestamp(seconds):
     return f"{h:02}:{m:02}:{s:02}.{ms:03}"
 
 
-def webvtt_text(text):
+def webvtt_text(text: str) -> str:
     """Escape a chapter title for use in a WebVTT cue.
 
     A cue payload treats ``<`` as the start of a tag and ``&`` as the
@@ -804,7 +899,7 @@ def webvtt_text(text):
     return html.escape(" ".join(text.split()), quote=False)
 
 
-def chapters(options, technical):
+def chapters(options: Options, technical: Technical) -> None:
     """Create WebVTT chapter file."""
     if not options.chapters:
         logger.debug("skip chapter file creation")
@@ -813,8 +908,8 @@ def chapters(options, technical):
         logger.debug("no chapter in input video")
         return
 
-    cues = []
-    seen = set()
+    cues: list[tuple[float, float, str]] = []
+    seen: set[tuple[float, float]] = set()
     for chapter in technical["chapters"]:
         start = float(chapter["start_time"])
         end = float(chapter["end_time"])
@@ -846,7 +941,7 @@ def chapters(options, technical):
             )
 
 
-def transcode(options, technical):
+def transcode(options: Options, technical: Technical) -> None:
     """Create transcoded files."""
     logger.debug("create transcoded files")
     video = technical["video"]
@@ -864,8 +959,8 @@ def transcode(options, technical):
         logger.info(f"input audio is {channels} channels at {sampling}Hz")
 
     # Input video
-    args = ("# input video", "-i", options.input)
-    aargs = ()
+    args: tuple[str, ...] = ("# input video", "-i", options.input)
+    aargs: tuple[str, ...] = ()
     if audio:
         aargs += (
             "# keep the first audio track",
@@ -961,7 +1056,7 @@ def transcode(options, technical):
         )
 
     # HLS
-    playlists = {}
+    playlists: dict[int, Playlist] = {}
     variants = zip(
         options.video_widths,
         options.video_bitrates,
@@ -994,7 +1089,7 @@ def transcode(options, technical):
                 "borderw=3: bordercolor=black@0.5",
             )
             cfilter = "apply filters: add overlay and scale"
-        vargs = ()
+        vargs: tuple[str, ...] = ()
         if vbitrate > 0:
             vargs += (
                 "# keep the first video track",
@@ -1118,7 +1213,7 @@ def transcode(options, technical):
     logger.info("write master playlist")
     no_codecs = False
 
-    def audio_group(gidx):
+    def audio_group(gidx: int) -> str:
         """Return the audio rendition group for one playlist prefix."""
         return f"audio{gidx}" if gidx else "audio"
 
@@ -1223,8 +1318,6 @@ if __name__ == "__main__":
 
         # Probe input file
         technical = probe(options)
-        if technical["video"] is None:
-            raise RuntimeError(f"no video track in {options.input}")
         if not technical["audio"] and options.audio_only:
             raise RuntimeError(
                 f"no audio track in {options.input}, cannot do an audio only variant"
