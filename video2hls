@@ -664,8 +664,8 @@ def probe(options: Options) -> Technical:
     }
 
 
-def extract_codecs(options: Options, sample: str) -> str | None:
-    """Extract codecs information from the given MP4 sample.
+def extract_codecs(options: Options, *samples: str) -> str | None:
+    """Extract codecs information from the given MP4 samples.
 
     ffprobe 8.1 and later provide the codec strings. Older versions
     need them to be built from the codec extradata. Return nothing
@@ -674,36 +674,37 @@ def extract_codecs(options: Options, sample: str) -> str | None:
     https://stackoverflow.com/questions/16363167/html5-video-tag-codecs-attribute#16365526
 
     """
-    out = run(
-        options,
-        "ffprobe",
-        "# don't display any status message",
-        "-v",
-        "quiet",
-        "# JSON output",
-        "-print_format",
-        "json",
-        "# also dump the extradata of each stream",
-        "-show_data",
-        "# get codec information of each stream",
-        "-show_entries",
-        "stream=index,codec_type,codec_name,mime_codec_string,extradata",
-        "# MP4 sample",
-        sample,
-    )
     codecs: list[str] = []
-    for stream in json.loads(out).get("streams", []):
-        if stream["codec_type"] not in {"video", "audio"}:
-            continue
-        codec = stream.get("mime_codec_string") or codec_from_extradata(stream)
-        if not codec:
-            logger.warning(
-                f"cannot extract codec of track {stream['index']} "
-                f"({stream['codec_name']})"
-            )
-            return None
-        logger.debug(f"found codec {codec} in {sample}")
-        codecs.append(codec)
+    for sample in samples:
+        out = run(
+            options,
+            "ffprobe",
+            "# don't display any status message",
+            "-v",
+            "quiet",
+            "# JSON output",
+            "-print_format",
+            "json",
+            "# also dump the extradata of each stream",
+            "-show_data",
+            "# get codec information of each stream",
+            "-show_entries",
+            "stream=index,codec_type,codec_name,mime_codec_string,extradata",
+            "# MP4 sample",
+            sample,
+        )
+        for stream in json.loads(out).get("streams", []):
+            if stream["codec_type"] not in {"video", "audio"}:
+                continue
+            codec = stream.get("mime_codec_string") or codec_from_extradata(stream)
+            if not codec:
+                logger.warning(
+                    f"cannot extract codec of track {stream['index']} "
+                    f"({stream['codec_name']}) in {sample}"
+                )
+                return None
+            logger.debug(f"found codec {codec} in {sample}")
+            codecs.append(codec)
     return ",".join(codecs)
 
 
@@ -1261,21 +1262,37 @@ def transcode(options: Options, technical: Technical) -> None:
         args += (playlist_name,)
         playlists[idx] = {"name": playlist_name, "resolution": f"{twidth}x{theight}"}
 
-        # Small MP4 to extract codec
-        if options.hls_add_codecs:
+        # Small MP4 to extract the video codec. Audio and video need
+        # their own file: an output ends as soon as one of its streams
+        # is complete and the other one may stay empty.
+        if options.hls_add_codecs and vbitrate > 0:
             args += (
-                "# also generate a small MP4 to extract codec later",
+                "# also generate a small MP4 to extract the video codec later",
                 "-f",
                 "mp4",
                 "# use same encoding arguments as the normal video:",
                 *vargs,
-                *cargs,
-                "# but keep it short",
-                "-t",
+                "# but keep only one frame",
+                "-frames:v",
                 "1",
                 "# put the result into a temporary file",
-                f"_{idx}.mp4",
+                f"_{idx}v.mp4",
             )
+
+    # The audio codec is the same for every variant
+    if options.hls_add_codecs and audios:
+        args += (
+            "# also generate a small MP4 to extract the audio codec later",
+            "-f",
+            "mp4",
+            "# use same encoding arguments as the normal audio:",
+            *cargs,
+            "# but keep only one frame",
+            "-frames:a",
+            "1",
+            "# put the result into a temporary file",
+            "_a.mp4",
+        )
 
     logger.info("start transcoding")
     run(
@@ -1305,7 +1322,10 @@ def transcode(options: Options, technical: Technical) -> None:
     all_codecs: dict[int, str] = {}
     if options.hls_add_codecs:
         for idx in playlists:
-            found = extract_codecs(options, f"_{idx}.mp4")
+            samples = [f"_{idx}v.mp4"] if options.video_bitrates[idx] > 0 else []
+            if audios:
+                samples.append("_a.mp4")
+            found = extract_codecs(options, *samples)
             if found is None:
                 all_codecs = {}
                 break
