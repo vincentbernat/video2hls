@@ -671,10 +671,52 @@ def probe(options: Options) -> Technical:
 def extract_codecs(options: Options, sample: str) -> str:
     """Extract codecs information from the given MP4 sample.
 
-    This makes use of mp4file since extracting this information is
-    quite complex. This is not complete as all codecs are a bit
-    different. See RFC 6381, section 3.3 and this SO question:
+    See RFC 6381, section 3.3 and this SO question:
     https://stackoverflow.com/questions/16363167/html5-video-tag-codecs-attribute#16365526
+
+    """
+    return extract_codecs_ffprobe(options, sample) or extract_codecs_mp4file(
+        options, sample
+    )
+
+
+def extract_codecs_ffprobe(options: Options, sample: str) -> str:
+    """Extract codecs information with ffprobe.
+
+    Return nothing when ffprobe is older than 8.1 as MIME codec
+    strings appeared in this version.
+
+    """
+    out = run(
+        options,
+        "ffprobe",
+        "# don't display any status message",
+        "-v",
+        "quiet",
+        "# JSON output",
+        "-print_format",
+        "json",
+        "# get the codec string of each stream",
+        "-show_entries",
+        "stream=mime_codec_string",
+        "# MP4 sample",
+        sample,
+    )
+    codecs = [
+        stream["mime_codec_string"]
+        for stream in json.loads(out).get("streams", [])
+        if "mime_codec_string" in stream
+    ]
+    for codec in codecs:
+        logger.debug(f"found codec {codec} in {sample}")
+    return ",".join(codecs)
+
+
+def extract_codecs_mp4file(options: Options, sample: str) -> str:
+    """Extract codecs information with mp4file.
+
+    Only a few codecs are handled as they all need a different
+    treatment.
 
     """
     result = run(options, "mp4file", "--dump", sample)
