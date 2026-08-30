@@ -1456,16 +1456,14 @@ def transcode(options: Options, technical: Technical) -> None:
             codecs = extract_codecs(options, options.mp4_filename)
         except FileNotFoundError:
             pass
-    codecs = f'; codecs="{codecs}"' if codecs else ""
+    mp4_type = f"""'video/mp4; codecs="{codecs}"'""" if codecs else '"video/mp4"'
     poster = f' poster="{options.poster_filename}"' if options.poster else ""
     logger.info(f"""video can be served with:
 
     <video{poster} controls>
       <source src="index.m3u8" type="application/vnd.apple.mpegurl">""")
     if options.mp4:
-        logger.info(
-            f'      <source src="{options.mp4_filename}" type="video/mp4{codecs}">'
-        )
+        logger.info(f'      <source src="{options.mp4_filename}" type={mp4_type}>')
     if options.chapters and technical["chapters"]:
         logger.info(
             f'      <track kind="chapters" src="{options.chapters_filename}" default>'
