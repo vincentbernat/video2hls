@@ -687,12 +687,14 @@ def extract_codecs(options: Options, sample: str) -> str | None:
         "-show_data",
         "# get codec information of each stream",
         "-show_entries",
-        "stream=codec_name,mime_codec_string,extradata",
+        "stream=index,codec_type,codec_name,mime_codec_string,extradata",
         "# MP4 sample",
         sample,
     )
     codecs: list[str] = []
     for stream in json.loads(out).get("streams", []):
+        if stream["codec_type"] not in {"video", "audio"}:
+            continue
         codec = stream.get("mime_codec_string") or codec_from_extradata(stream)
         if not codec:
             logger.warning(f"cannot extract codec of {stream['codec_name']}")
