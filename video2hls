@@ -697,7 +697,10 @@ def extract_codecs(options: Options, sample: str) -> str | None:
             continue
         codec = stream.get("mime_codec_string") or codec_from_extradata(stream)
         if not codec:
-            logger.warning(f"cannot extract codec of {stream['codec_name']}")
+            logger.warning(
+                f"cannot extract codec of track {stream['index']} "
+                f"({stream['codec_name']})"
+            )
             return None
         logger.debug(f"found codec {codec} in {sample}")
         codecs.append(codec)
