@@ -1285,12 +1285,9 @@ def transcode(options: Options, technical: Technical) -> None:
                 "# use same encoding arguments as the normal video:",
                 *vargs,
                 *cargs,
-            )
-            if vbitrate > 0:
-                args += ("# but keep only one frame", "-frames:v", "1")
-            else:
-                args += ("# but keep it short", "-t", "1")
-            args += (
+                "# but keep it short",
+                "-t",
+                "1",
                 "# put the result into a temporary file",
                 f"_{idx}.mp4",
             )
