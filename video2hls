@@ -765,7 +765,10 @@ def fix_options(options: Options, technical: Technical) -> None:
         if idx >= len(options.audio_names):
             language = options.audio_languages[idx]
             options.audio_names.append(
-                tags.get("title") or (language if language != "und" else "Audio")
+                # MP4 stores the track title in the "name" box
+                tags.get("title")
+                or tags.get("name")
+                or (language if language != "und" else "Audio")
             )
     if len(set(options.audio_names)) != len(options.audio_names):
         # Renditions of a group need distinct names
