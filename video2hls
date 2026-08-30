@@ -55,7 +55,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
-from types import EllipsisType, MappingProxyType
+from types import MappingProxyType
 from typing import Any, TypedDict
 
 logger = logging.getLogger("video2hls")
@@ -138,7 +138,6 @@ class Options(argparse.Namespace):
 
     ffmpeg: str
     ffprobe: str
-    mp4file: str
 
     ratio: float
     output: str
@@ -482,9 +481,6 @@ def parse_args() -> Options:
     g.add_argument(
         "--ffprobe", metavar="EXE", default="ffprobe", help="ffprobe executable name"
     )
-    g.add_argument(
-        "--mp4file", metavar="EXE", default="mp4file", help="mp4file executable name"
-    )
 
     parser.add_argument(
         "--ratio",
@@ -584,7 +580,7 @@ def run(options: Options, what: str, *args: str) -> str:
     Comments are filtered out, except when displaying to user.
 
     """
-    if what in {"ffprobe", "ffmpeg", "mp4file"}:
+    if what in {"ffprobe", "ffmpeg"}:
         what = getattr(options, what)
 
     # Pretty format arguments
@@ -668,23 +664,14 @@ def probe(options: Options) -> Technical:
     }
 
 
-def extract_codecs(options: Options, sample: str) -> str:
+def extract_codecs(options: Options, sample: str) -> str | None:
     """Extract codecs information from the given MP4 sample.
 
+    ffprobe 8.1 and later provide the codec strings. Older versions
+    need them to be built from the codec extradata. Return nothing
+    when a stream stays unknown as the result has to cover them all.
     See RFC 6381, section 3.3 and this SO question:
     https://stackoverflow.com/questions/16363167/html5-video-tag-codecs-attribute#16365526
-
-    """
-    return extract_codecs_ffprobe(options, sample) or extract_codecs_mp4file(
-        options, sample
-    )
-
-
-def extract_codecs_ffprobe(options: Options, sample: str) -> str:
-    """Extract codecs information with ffprobe.
-
-    Return nothing when ffprobe is older than 8.1 as MIME codec
-    strings appeared in this version.
 
     """
     out = run(
@@ -696,97 +683,45 @@ def extract_codecs_ffprobe(options: Options, sample: str) -> str:
         "# JSON output",
         "-print_format",
         "json",
-        "# get the codec string of each stream",
+        "# also dump the extradata of each stream",
+        "-show_data",
+        "# get codec information of each stream",
         "-show_entries",
-        "stream=mime_codec_string",
+        "stream=codec_name,mime_codec_string,extradata",
         "# MP4 sample",
         sample,
     )
-    codecs = [
-        stream["mime_codec_string"]
-        for stream in json.loads(out).get("streams", [])
-        if "mime_codec_string" in stream
-    ]
-    for codec in codecs:
+    codecs: list[str] = []
+    for stream in json.loads(out).get("streams", []):
+        codec = stream.get("mime_codec_string") or codec_from_extradata(stream)
+        if not codec:
+            logger.warning(f"cannot extract codec of {stream['codec_name']}")
+            return None
         logger.debug(f"found codec {codec} in {sample}")
+        codecs.append(codec)
     return ",".join(codecs)
 
 
-def extract_codecs_mp4file(options: Options, sample: str) -> str:
-    """Extract codecs information with mp4file.
+def codec_from_extradata(stream: Stream) -> str | None:
+    """Build the codec string of a stream from its extradata.
 
-    Only a few codecs are handled as they all need a different
-    treatment.
+    Only H.264 and AAC are handled. The extradata comes as a hex dump.
+    For H.264, the profile, the constraints and the level are the
+    bytes following the version of the AVC configuration. For AAC, the
+    object type is in the first bits of the audio specific config.
 
     """
-    result = run(options, "mp4file", "--dump", sample)
-    lines = result.split("\n")
-    # The codecs are the ones in /moov/trak/mdia/minf/stbl/stdsd
-    codec_re = re.compile(
-        r".*: type (?P<codec>\S+) \(moov.trak.mdia.minf.stbl.stsd.(?P=codec)\)"
-    )
-    attribute_re = re.compile(r".*: (?P<attribute>\S+) = (?P<value>\d+) .*")
-    info_re = re.compile(r".*: info = <\d+ bytes>\s+(?P<byte>\d{2}) .*")
-    codecs = {
-        mo.group("codec") for mo in [codec_re.match(line) for line in lines] if mo
-    }
-    results: list[str] = []
-    for codec in codecs:
-        if codec == "avc1":
-            # Look for moov.trak.mdia.minf.stbl.stsd.avc1.avcC
-            for idx, line in enumerate(lines):
-                if "(moov.trak.mdia.minf.stbl.stsd.avc1.avcC)" in line:
-                    indent = len(line) - len(line.lstrip(" "))
-                    spaces = " " * (indent + 1)
-                    profile = None
-                    constraints = None
-                    level = None
-                    for line in lines[idx + 1 :]:
-                        if not line.startswith(spaces):
-                            break
-                        mo = attribute_re.match(line)
-                        if not mo:
-                            continue
-                        if mo.group("attribute") == "AVCProfileIndication":
-                            profile = int(mo.group("value"))
-                        elif mo.group("attribute") == "profile_compatibility":
-                            constraints = int(mo.group("value"))
-                        elif mo.group("attribute") == "AVCLevelIndication":
-                            level = int(mo.group("value"))
-                    if all(x is not None for x in (profile, constraints, level)):
-                        codec = f"avc1.{profile:02x}{constraints:02x}{level:02x}"
-                        logger.debug(f"found codec {codec} in {sample}")
-                        results.append(codec)
-                    else:
-                        raise RuntimeError("unable to decode AVC1 codec")
-        elif codec == "mp4a":
-            # Look for moov.trak.mdia.minf.stbl.stsd.mp4a.esds
-            for idx, line in enumerate(lines):
-                if "(moov.trak.mdia.minf.stbl.stsd.mp4a.esds)" in line:
-                    indent = len(line) - len(line.lstrip(" "))
-                    spaces = " " * (indent + 1)
-                    oti = None
-                    osti: int | EllipsisType | None = None
-                    for line in lines[idx + 1 :]:
-                        if not line.startswith(spaces):
-                            break
-                        mo = attribute_re.match(line)
-                        if mo and mo.group("attribute") == "objectTypeId":
-                            oti = int(mo.group("value"))
-                        elif "decSpecificInfo" in line:
-                            osti = ...  # Parse the next line
-                        elif osti is ...:
-                            mo = info_re.match(line)
-                            if not mo:
-                                raise RuntimeError("cannot decode specific info")
-                            osti = (int(mo.group("byte"), 16) & 0xF8) >> 3
-                    if all(x is not None for x in (oti, osti)):
-                        codec = f"mp4a.{oti:02x}.{osti}"
-                        logger.debug(f"found codec {codec} in {sample}")
-                        results.append(codec)
-                    else:
-                        raise RuntimeError("unable to decode MP4A codec")
-    return ",".join(results)
+    dump_re = re.compile(r"^[0-9a-f]{8}: ((?:[0-9a-f]{2,4} )+)", re.MULTILINE)
+    mo = dump_re.search(stream.get("extradata", ""))
+    if not mo:
+        return None
+    data = bytes.fromhex(mo.group(1).replace(" ", ""))
+    codec_name = stream.get("codec_name")
+    if codec_name == "h264" and len(data) >= 4:
+        return f"avc1.{data[1]:02x}{data[2]:02x}{data[3]:02x}"
+    if codec_name == "aac" and data:
+        return f"mp4a.40.{data[0] >> 3}"
+    return None
 
 
 def contained_in(original: tuple[int, int], target: tuple[int, int]) -> tuple[int, int]:
@@ -1346,7 +1281,6 @@ def transcode(options: Options, technical: Technical) -> None:
     )
 
     logger.info("write master playlist")
-    no_codecs = False
     # Advertise the audio tracks only when a player can switch them
     audio_media = options.audio_separate or len(audios) > 1
 
@@ -1359,17 +1293,15 @@ def transcode(options: Options, technical: Technical) -> None:
         """
         return f"audio{gidx}" if options.audio_separate and gidx else "audio"
 
-    def codecs_of(idx: int) -> str | None:
-        """Return the codecs of one output, from its sample MP4."""
-        nonlocal no_codecs
-        if no_codecs or not options.hls_add_codecs:
-            return None
-        try:
-            return extract_codecs(options, f"_{idx}.mp4")
-        except FileNotFoundError:
-            logger.warning("cannot extract codec due to mp4file missing")
-            no_codecs = True
-            return None
+    # Either every output gets its codecs or none of them does
+    all_codecs: dict[int, str] = {}
+    if options.hls_add_codecs:
+        for idx in playlists:
+            found = extract_codecs(options, f"_{idx}.mp4")
+            if found is None:
+                all_codecs = {}
+                break
+            all_codecs[idx] = found
 
     with open(options.hls_master_playlist, "w", encoding="utf-8") as master:
         master.write("#EXTM3U\n")
@@ -1415,7 +1347,7 @@ def transcode(options: Options, technical: Technical) -> None:
                 # We didn't ask for an audio only track but we have
                 # one, skip it.
                 continue
-            codecs = codecs_of(idx)
+            codecs = all_codecs.get(idx)
             bandwidth = options.video_bitrates[idx]
             if audios:
                 # With separate audio, only one track is fetched
@@ -1440,7 +1372,7 @@ def transcode(options: Options, technical: Technical) -> None:
         if options.audio_only and options.audio_separate:
             # The audio only variant is the default rendition itself
             vidx = audio_variants[options.audio_default]
-            codecs = codecs_of(vidx)
+            codecs = all_codecs.get(vidx)
             for gidx, prefix in enumerate(options.hls_playlist_prefix):
                 master.write(f"#EXT-X-STREAM-INF:BANDWIDTH={options.audio_bitrate}000,")
                 if codecs:
@@ -1451,11 +1383,8 @@ def transcode(options: Options, technical: Technical) -> None:
                 )
 
     codecs = None
-    if not no_codecs and options.hls_add_codecs and options.mp4:
-        try:
-            codecs = extract_codecs(options, options.mp4_filename)
-        except FileNotFoundError:
-            pass
+    if all_codecs and options.mp4:
+        codecs = extract_codecs(options, options.mp4_filename)
     mp4_type = f"""'video/mp4; codecs="{codecs}"'""" if codecs else '"video/mp4"'
     poster = f' poster="{options.poster_filename}"' if options.poster else ""
     logger.info(f"""video can be served with:
