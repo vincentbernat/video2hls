@@ -8,12 +8,15 @@ automatically selects the appropriate bitrate to download the next
 segment.
 
 The script needs Python 3.10 and you can run it with `--help` to get
-more information about it.
+more information about it. If [Babel][] is installed, an audio track
+without a title is named after its language, written in this language
+(`fr` becomes `français`).
 
 Some browsers may not support natively HLS. In this case, one can use
 [hls.js][] to get appropriate support. Many video players also support
 this format. See this [blog post][] for more information.
 
+[Babel]: https://babel.pocoo.org/
 [hls.js]: https://github.com/video-dev/hls.js/
 [blog post]: https://vincent.bernat.ch/en/blog/2018-self-hosted-videos
 

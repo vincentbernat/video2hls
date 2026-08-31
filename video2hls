@@ -741,6 +741,19 @@ def contained_in(original: tuple[int, int], target: tuple[int, int]) -> tuple[in
     return (width // 2 * 2, height // 2 * 2)
 
 
+def language_name(code: str) -> str | None:
+    """Get the name of a language, written in this same language."""
+    try:
+        from babel import Locale, UnknownLocaleError
+    except ImportError:
+        return None
+    try:
+        locale = Locale.parse(code.replace("_", "-"), sep="-")
+    except (ValueError, UnknownLocaleError):
+        return None
+    return Locale(locale.language).get_display_name()
+
+
 def fix_options(options: Options, technical: Technical) -> None:
     """Fix options to remove too great sizes."""
     # If no HLS playlist prefix, use an empty one
@@ -765,11 +778,12 @@ def fix_options(options: Options, technical: Technical) -> None:
             options.audio_languages.append(tags.get("language", "und"))
         if idx >= len(options.audio_names):
             language = options.audio_languages[idx]
+            # MP4 stores the track title in the "name" box
             options.audio_names.append(
-                # MP4 stores the track title in the "name" box
                 tags.get("title")
                 or tags.get("name")
-                or (language if language != "und" else "Audio")
+                or (language != "und" and (language_name(language) or language))
+                or "Audio"
             )
     if len(set(options.audio_names)) != len(options.audio_names):
         # Renditions of a group need distinct names
