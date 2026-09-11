@@ -880,7 +880,7 @@ def poster(options: Options, technical: Technical) -> None:
     logger.debug("create poster")
 
     # Determine position
-    mo = re.match(r"(?:(?P<percent>\d+)%|(?P<seconds>\d+)s)", options.poster_seek)
+    mo = re.fullmatch(r"(?:(?P<percent>\d+)%|(?P<seconds>\d+)s)", options.poster_seek)
     if not mo:
         raise RuntimeError(f"invalid value for poster seek: {options.poster_seek}")
     if mo.group("percent"):
